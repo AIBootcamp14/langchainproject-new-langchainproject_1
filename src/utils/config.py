@@ -11,7 +11,7 @@ class Config:
     
     # API Keys
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-    SOLAR_API_KEY = os.getenv("SOLAR_API_KEY")
+    UPSTAGE_API_KEY = os.getenv("UPSTAGE_API_KEY")
     TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
     
     # API Key 검증
@@ -20,25 +20,51 @@ class Config:
         """필수 API 키 존재 여부 확인"""
         if not cls.OPENAI_API_KEY:
             raise ValueError("OPENAI_API_KEY가 설정되지 않았습니다.")
-        if not cls.SOLAR_API_KEY:
-            raise ValueError("SOLAR_API_KEY가 설정되지 않았습니다.")
+        if not cls.UPSTAGE_API_KEY:
+            raise ValueError("UPSTAGE_API_KEY 설정되지 않았습니다.")
         if not cls.TAVILY_API_KEY:
             raise ValueError("TAVILY_API_KEY가 설정되지 않았습니다.")
             
-    # Paths
     BASE_DIR = Path(__file__).resolve().parent.parent.parent
-    VECTOR_DB_PATH = BASE_DIR / "chroma_db"
+
+    # Logs
     LOGS_DIR = BASE_DIR / "logs"
-    
-    # Embedding
-    EMBEDDING_MODEL = "text-embedding-ada-002"
+
+    # Database
+    DB_DIR = BASE_DIR / "database"
+    DB_PATH = str(DB_DIR / "chat.db")
+
+    # Vector DB
+    PERSIST_DIR = "data/chroma_store"
+    COLLECTION_NAME = "finance_terms"
+    EMBEDDING_MODEL = "BAAI/bge-m3"
+    PDF_PATH_PATTERN = "data/pdf/*.pdf"
     
     # Chunking
-    CHUNK_SIZE = 1000
-    CHUNK_OVERLAP = 200
+    CHUNK_SIZE_S = 300
+    CHUNK_OVERLAP_S = 50
+    CHUNK_SIZE_L = 800
+    CHUNK_OVERLAP_L = 140
     
     # Retrieval
     TOP_K = 5
     
     # Logging
     LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+
+    # LLM Models
+    LLM_MODEL = "solar-pro2"  # Financial Analyst와 Report Generator가 사용할 기본 모델
+    LLM_TEMPERATURE = 0  # 기본 temperature (0 = 결정적)
+
+    # Quality Evaluator
+    QUALITY_THRESHOLD = 2  # 품질 평가 통과 최저 점수 (1-5점 중)
+
+    # Retriever
+    RETRIEVAL_THRESHOLD = 0.3  # 검색 결과 최소 유사도 점수
+    DEFAULT_RETRIEVAL_TOP_K = 3  # 기본 검색 결과 개수
+
+    # Response Messages
+    NOT_FINANCE_RESPONSE = "저는 경제, 금융관련 정보를 통해 전문적으로 사용자의 요청을 도와드리는 AI입니다!\n주식, 환율, 기업 분석 등 금융 관련 질문을 해주시면 답변 도와 드릴게요 😄"
+
+
+

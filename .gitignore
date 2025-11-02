@@ -295,5 +295,18 @@ $RECYCLE.BIN/
 
 # articles
 data/*.json
+*.json
+
+# test outputs
+test_outputs/
+
+# other folders
+plan/
+logs/*
+charts/*
+reports/*
+
+# other files
+uv.lock
 
 # End of https://www.toptal.com/developers/gitignore/api/python,jupyternotebooks,windows,macos,linux,git,visualstudiocode

@@ -18,38 +18,56 @@
 ```bash
 .
 ├── README.md                                    # 프로젝트 소개, 설치 방법, 사용 가이드, 아키텍처 설명
+├── charts/                                      # 생성된 차트 이미지 저장 디렉토리 (png, jpg)
+├── data/                                        # 데이터 저장소
+│   ├── chroma_store/                            # ChromaDB 벡터 저장소
+│   │   ├── chroma.sqlite3                       # ChromaDB SQLite 데이터베이스
+│   └── pdf/                                     # RAG용 PDF 문서 저장소
+│       ├── 2020_경제금융용어 700선_한국은행.pdf
+│       ├── 주식용어모음집.pdf
+│       └── 주식용어정리.pdf
+│
+├── img/                                         # 프로젝트 관련 이미지 (아키텍처 다이어그램 등)
+│   └── ai_agent_project_architecture_team1.png
+├── logs/                                        # 로그 파일 저장 디렉토리
 ├── pyproject.toml                               # 프로젝트 메타데이터 및 의존성 관리 (uv 패키지 매니저)
-├── uv.lock                                      # 의존성 잠금 파일 (재현 가능한 환경 보장)
+├── reports/                                     # 생성된 보고서 저장 디렉토리 (txt, md, pdf)
 └── src
-    ├── agents                                   # 멀티 에이전트
+    ├── agents/                                  # 멀티 에이전트 모듈
     │   ├── financial_analyst.py                 # 재무 분석 에이전트: 주식 정보 조회, 비교, 뉴스 검색 등 수행
-    │   ├── quality_evaluator.py                 # 품질 검증 에이전트: LLM-as-a-judge로 답변 혹은 재시도 판단
-    │   ├── report_generator.py                  # 보고서 생성 에이전트: 차트 생성, 요약, PDF/Excel/Markdown 저장
-    │   ├── request_analysis.py                  # 요청 분석 에이전트: 사용자 질문 분석, 명확성 검증, 재질문 수행
-    │   ├── supervisor.py                        # 슈퍼바이저: 작업 분배, 에이전트 라우팅
-    │   ├── tools                                # 각 에이전트가 사용하는 도구 모음
-    │   │   ├── fianancial_tools.py              # 금융 도구: yfinance 기반 주식 검색, 정보 조회, 비교, 재무제표
-    │   │   ├── rag_tools.py                     # RAG 도구: 벡터 DB 문서 검색
-    │   │   ├── report_tools.py                  # 보고서 도구: 차트 생성, 파일 저장
-    │   │   └── search_tools.py                  # 검색 도구: 웹 검색
-    │   ├── vector_search_agent.py               # 벡터 검색 에이전트: RAG 파이프라인 실행, 관련 문서 검색 및 컨텍스트 제공
-    │   └── workflow.py                          # LangGraph 기반 워크플로우: 에이전트 간 상태 전달 및 조건부 라우팅 정의
-    ├── database
-    │   └── chat_history.py                      # 대화 기록 관리: 세션별 메시지 저장/조회
-    ├── model
-    │   └── llm.py                               # LLM 인스턴스 생성: OpenAI/Solar 모델 초기화, 프롬프트 템플릿 관리
-    ├── rag
-    │   ├── pipeline.py                          # RAG 전체 파이프라인
-    │   ├── retriever.py                         # 문서 검색기: 벡터 DB 쿼리, 유사도 기반 Top-K 문서 반환
-    │   └── vector_store.py                      # 벡터 저장소: Chroma/FAISS 초기화, 문서 임베딩 및 인덱싱
-    ├── test                                     # 구현된 기능 테스트 (프로젝트 완료 전까지만 존재하는 임시 폴더)
-    │   └── fianancial_tools_test.py                  
-    ├── utils
+    │   ├── quality_evaluator.py                 # 품질 검증 에이전트: LLM-as-a-judge로 답변 품질 평가 및 재시도 판단
+    │   ├── report_generator.py                  # 보고서 생성 에이전트: 차트 생성, 요약, PDF/Markdown 저장
+    │   ├── request_analyst.py                   # 요청 분석 에이전트: 사용자 질문 금융 관련 여부 분류, 쿼리 재작성
+    │   ├── supervisor.py                        # 슈퍼바이저: 질문 라우팅 (RAG vs 주식 분석)
+    │   └── tools/                               # 각 에이전트가 사용하는 도구 모음
+    │       ├── financial_tools.py               # 금융 도구: yfinance 기반 주식 검색, 정보 조회, 비교, 재무제표
+    │       └── report_tools.py                  # 보고서 도구: 차트 생성, 파일 저장 (txt, md, pdf)
+    │
+    ├── database/                                # 데이터베이스 모듈
+    │   └── chat_history.py                      # 대화 기록 관리: SQLite 기반 세션별 메시지 저장/조회/통계
+    │
+    ├── main.py                                  # CLI 진입점
+    │
+    ├── model/                                   # LLM 모델 관리
+    │   └── llm.py                               # LLM 인스턴스 생성: Upstage Solar-Pro2 모델 초기화, 프롬프트 템플릿 관리
+    │
+    ├── rag/                                     # RAG (Retrieval-Augmented Generation) 파이프라인
+    │   ├── retriever.py                         # 문서 검색기: ChromaDB 쿼리, 유사도 기반 Top-K 문서 반환
+    │   └── vector_store.py                      # 벡터 저장소: ChromaDB 초기화, PDF 문서 임베딩 및 인덱싱
+    │
+    ├── test/                                    # 구현된 기능 테스트
+    │
+    ├── utils/                                   # 유틸리티 모듈
     │   ├── config.py                            # 설정 관리: 환경 변수 로드(.env), API 키, 글로벌 설정값
-    │   └── logger.py                            # 로깅 설정
-    ├── web
-    │   └── app.py                               # Streamlit UI: 채팅 인터페이스, 세션 관리, 워크플로우 실행 트리거
-    └── main.py                                  # CLI 진입점
+    │   └── logger.py                            # 로깅 설정: 파일/콘솔 로거 구성
+    │
+    ├── web/                                     # 웹 인터페이스
+    │   └── app.py                               # Streamlit UI: 채팅 인터페이스, 세션 관리, 워크플로우 실행
+    │
+    └── workflow/                                # LangGraph 기반 워크플로우
+        ├── edges.py                             # 워크플로우 엣지: 에이전트 간 조건부 분기 정의
+        ├── graph.py                             # 워크플로우 그래프: 전체 워크플로우 구성 및 실행
+        └── nodes.py                             # 워크플로우 노드: 각 에이전트를 노드로 래핑, 상태 전달
 ```
 
 ## **1. 서비스 구성 요소**  
