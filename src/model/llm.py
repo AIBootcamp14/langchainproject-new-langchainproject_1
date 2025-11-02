@@ -273,6 +273,26 @@ User Query: {input}
 평가 점수:""",
             input_variables=["question", "answer"]
         )
+        
+        # Query Rewrite 프롬프트
+        self._prompts["rewrite_query"] = PromptTemplate(
+            template="""당신은 금융 도메인 질문을 같은 의미를 유지한 채 다른 표현으로 재작성하는 전문가입니다.
+
+            입력 정보를 기반으로 간결하고 자연스러운 새로운 질문을 한 문장으로만 출력하세요.
+            - 원문의 핵심 의도를 유지하면서 표현만 바꿉니다.
+            - 금융 용어, 종목명, 숫자 등은 정확히 보존합니다.
+            - 추가 설명, 불필요한 마크다운, 따옴표는 사용하지 않습니다.
+
+            출력 스키마:
+            - rewritten_query (string): 재작성된 질문
+
+            실패 원인: {failure_reason}
+            원본 질문: {original_query}
+
+            관련 대화:
+            {chat_history}""",
+            input_variables=["original_query", "failure_reason", "chat_history"]
+        )
 
         logger.info(f"프롬프트 초기화 완료: {list(self._prompts.keys())}")
 

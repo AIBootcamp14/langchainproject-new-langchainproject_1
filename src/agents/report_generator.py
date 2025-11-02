@@ -392,6 +392,48 @@ An error occurred: {str(e)}
 - 전문적이고 객관적인 톤
 - 비교 표 사용 권장
 """
+        elif analysis_type == "rag":
+            documents = analysis_data.get("documents") or []
+            query = analysis_data.get("query", "")
+
+            if not documents:
+                logger.warning("RAG 검색 결과가 비어 있습니다.")
+                return (
+                    "## RAG 검색 결과 없음\n\n"
+                    f"질문: {query or '질문 정보 없음'}\n\n"
+                    "검색된 문서가 없어 보고서를 생성할 수 없습니다. "
+                    "질문을 더 구체적으로 작성하거나 다른 키워드로 다시 시도해 주세요."
+                )
+
+            max_docs = 1
+            selected_docs = documents[:max_docs]
+            if len(documents) > max_docs:
+                logger.info(
+                    "RAG 문서 %d개 중 상위 %d개만 사용합니다.",
+                    len(documents),
+                    max_docs
+                )
+
+            documents_block = "\n\n".join(
+                f"[문서 {idx + 1}]\n{doc}"
+                for idx, doc in enumerate(selected_docs)
+            )
+        
+            prompt = f"""당신은 금융 분야 RAG 요약 전문가입니다. 아래 사용자 질문과 검색된 문서 내용을 토대로 간결한 마크다운 보고서를 작성하세요.
+
+                    [사용자 질문]
+                    {query}
+
+                    [검색 문서]
+                    {documents_block}
+
+                    보고서 지침:
+                    1. 사용자 질문과 동일한 언어로 작성하세요.
+                    2. 제목은 '## RAG 기반 금융 요약'으로 시작합니다.
+                    3. '### 주요 인사이트', '### 근거', '### 추가 제안' 세 섹션을 포함하세요.
+                    4. 문서에서 확인된 사실만 사용하고 추측은 금지합니다.
+                    5. 핵심 수치나 인용은 bullet 형태로 명확하게 정리하세요.
+                    """
         else:
             logger.error(f"Unknown analysis_type: {analysis_type}")
             return f"❌ 지원하지 않는 분석 타입입니다: {analysis_type}"
@@ -408,15 +450,15 @@ An error occurred: {str(e)}
             logger.error(f"직접 보고서 생성 실패: {str(e)}")
             return f"""# 보고서 생성 오류
 
-보고서 생성 중 오류가 발생했습니다: {str(e)}
+            보고서 생성 중 오류가 발생했습니다: {str(e)}
 
-## 분석 데이터
-```json
-{json.dumps(analysis_data, ensure_ascii=False, indent=2)}
-```
+            ## 분석 데이터
+            ```json
+            {json.dumps(analysis_data, ensure_ascii=False, indent=2)}
+            ```
 
-⚠️ 다시 시도해주세요.
-"""
+            ⚠️ 다시 시도해주세요.
+            """
 
 
 if __name__ == "__main__":

@@ -20,6 +20,11 @@ class FinanceGate(BaseModel):
     label: str = Field(description="경제 금융 관련 여부 label.")
 
 
+class RewriteResult(BaseModel):
+    """재작성된 쿼리 결과"""
+    rewritten_query: str = Field(description="질문의 의도를 유지하면서 다른 표현으로 재작성된 사용자 질문")
+
+
 def request_analysis(state, llm=None, chat_history: Optional[List[Dict]] = None) -> Literal["finance", "not_finance"]:
     """
     사용자 요청을 분석하여 경제/금융 관련 여부를 판별합니다.
@@ -79,7 +84,7 @@ def rewrite_query(
     llm=None
 ) -> Dict[str, Any]:
     """
-    quality_evaluator에서 incorrect로 판정 시 쿼리를 재작성합니다.
+    quality_evaluator에서 incorrect로 판정 시, 기존 쿼리를 의미 보존한 채 재작성합니다.
 
     Args:
         original_query: 원본 사용자 질문
@@ -102,8 +107,8 @@ def rewrite_query(
         logger.info(f"이전 대화 {len(chat_history)}개 참조 중")
 
     # LLM 가져오기
+    llm_manager = get_llm_manager()
     if llm is None:
-        llm_manager = get_llm_manager()
         llm = llm_manager.get_model(Config.LLM_MODEL, temperature=Config.LLM_TEMPERATURE)
 
     # 간단한 휴리스틱: 쿼리가 너무 짧으면 유저에게 추가 정보 요청
@@ -115,11 +120,32 @@ def rewrite_query(
             "request_for_detail_msg": "질문을 좀 더 구체적으로 말씀해 주시겠어요? 어떤 정보를 원하시나요?"
         }
 
-    # 기본적으로는 원본 쿼리를 그대로 반환하고, 유저 입력 불필요
-    # (실제로는 LLM을 사용하여 쿼리를 재작성할 수 있음)
-    logger.info("쿼리 재작성: 원본 유지 (재시도)")
+    # 프롬프트 및 체인 구성
+    rewrite_prompt = llm_manager.get_prompt("rewrite_query")
+    chat_history_text = ""
+    if chat_history:
+        chat_history_text = "\n".join(
+            f"{msg.get('role', 'unknown')}: {str(msg.get('content', ''))}"
+            for msg in chat_history
+        )
+    prompt_inputs = {
+        "original_query": original_query,
+        "failure_reason": failure_reason,
+        "chat_history": chat_history_text or "없음"
+    }
+
+    chain = rewrite_prompt | llm.with_structured_output(RewriteResult)
+    response = chain.invoke(prompt_inputs)
+    rewritten_query = response.rewritten_query.strip()
+
+    if not rewritten_query:
+        logger.warning("LLM 재작성 결과가 비어 있어 원본을 그대로 사용합니다.")
+        rewritten_query = original_query
+    else:
+        logger.info(f"쿼리 재작성 완료: {rewritten_query}")
+
     return {
-        "rewritten_query": original_query,
+        "rewritten_query": rewritten_query,
         "needs_user_input": False,
         "request_for_detail_msg": None
     }

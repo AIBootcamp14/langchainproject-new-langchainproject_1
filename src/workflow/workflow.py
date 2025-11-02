@@ -21,7 +21,8 @@ logger = get_logger(__name__)
 class WorkflowState(TypedDict, total=False):
     """LangGraph에서 주고받는 기본 상태 구조.
     
-    개인적으로 필요한 상태 값들은 아래에 주석과 함께 추가 부탁드리겠습니다.
+    *** 개인적으로 필요한 상태 값들은 아래에 주석과 함께 추가 부탁드리겠습니다.*** 
+    
     """
     session_id: str # 사용자 세션 id
     question: str # 사용자의 질문
@@ -37,7 +38,7 @@ class WorkflowState(TypedDict, total=False):
 
 
 class Workflow:
-    """요청 분석 → 라우팅 → 답변 생성 → 품질 평가까지 이어지는 워크플로우."""
+    """요청 분석 → 라우팅 → 답변 생성 → 품질 평가 → (선택:재시도 루프) 까지 이어지는 워크플로우."""
 
     def __init__(self):
         self.llm_manager = get_llm_manager()
@@ -160,10 +161,15 @@ class Workflow:
         if state.get("request_type","rag") == "rag":
             logger.info("📝 RAG 모드")
             results = self.retriever.retrieve(question)
-            state["rag_search_results"] = [
-            f"- (score={score:.2f}) {doc.metadata.get('source', 'unknown')} p.{doc.metadata.get('page', '?')}"
-            for doc, score in results
-            ]
+            rag_search_results = []
+            for doc, score in results:
+                page = doc.metadata.get("page", "?")
+                if isinstance(page, int):
+                    page += 1  # 0-index → 1-index 변환
+                source = doc.metadata.get("source", "unknown")
+                rag_search_results.append(f"- (score={score:.2f}) {source} p.{page}")
+
+            state["rag_search_results"] = rag_search_results
             
             analysis_data = {
             "analysis_type" : "rag",
@@ -290,7 +296,9 @@ if __name__ == "__main__":
         # "삼성전자와 애플의 최근 실적을 비교해줘",
         # "경제와 관련 없는 질문입니다",
         # "레버리지 ETF의 위험성을 설명해줘" 
-        "삼성전자와 애플의 최근 주가를 비교 후, 간단하게 차트를 그려줘",
+        # "삼성전자와 애플의 최근 주가를 비교 후, 간단하게 차트를 그려줘",
+        # "나스닥이 뭐야?",
+        "모바일로 주식 거래하는 앱은 뭐라고 하나요?"
     ]
 
     for question in sample_questions:
