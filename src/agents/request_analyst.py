@@ -7,6 +7,7 @@ Request Analyst Module
 
 from typing import Literal, List, Dict, Any, Optional
 from pydantic import BaseModel, Field
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 from src.model.llm import get_llm_manager
 from src.utils.config import Config
@@ -39,6 +40,7 @@ def request_analysis(state, llm=None, chat_history: Optional[List[Dict]] = None)
     """
     logger.info("=" * 10 + " Request Analysis THINKING START! " + "=" * 10)
     question = state['question']
+    messages = state.get('messages', [])
     logger.info(f"분석할 질문: {question}")
 
     # chat_history가 있으면 컨텍스트 정보 로깅
@@ -58,11 +60,16 @@ def request_analysis(state, llm=None, chat_history: Optional[List[Dict]] = None)
 
     # 프롬프트 가져오기
     llm_manager = get_llm_manager()
-    request_analysis_prompt = llm_manager.get_prompt("request_analyst")
+    base_prompt = llm_manager.get_prompt("request_analyst")
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", base_prompt.template),
+        MessagesPlaceholder('messages'),
+        ("human", "사용자 질문:\n{input}"),
+    ])
 
     # 체인 생성 및 실행
-    chain = request_analysis_prompt | llm.with_structured_output(FinanceGate)
-    result = chain.invoke({"question": question})
+    chain = prompt | llm.with_structured_output(FinanceGate)
+    result = chain.invoke({"input": question, 'messages' : messages})
 
     logger.info(f"Question status: {result.label}")
 

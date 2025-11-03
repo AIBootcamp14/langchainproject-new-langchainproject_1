@@ -10,6 +10,7 @@ from typing_extensions import TypedDict
 from pydantic import BaseModel, Field
 
 from langgraph.graph.message import add_messages
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 from src.model.llm import get_llm_manager
 from src.utils.config import Config
@@ -52,6 +53,7 @@ def supervisor(state: State, llm=None) -> Literal["vector_search_agent", "financ
     """
     logger.info("=" * 10 + " SUPERVISOR THINKING START! " + "=" * 10)
     question = state['question']
+    messages = state.get('messages', [])
     logger.info(f"라우팅할 질문: {question}")
 
     # LLM 가져오기
@@ -62,11 +64,16 @@ def supervisor(state: State, llm=None) -> Literal["vector_search_agent", "financ
 
     # 프롬프트 가져오기
     llm_manager = get_llm_manager()
-    supervisor_prompt = llm_manager.get_prompt("supervisor")
+    base_prompt = llm_manager.get_prompt("supervisor")
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", base_prompt.template),
+        MessagesPlaceholder('messages'),
+        ("human", "사용자 질문:\n{input}"),
 
+    ])
     # 체인 생성 및 실행
-    chain = supervisor_prompt | llm.with_structured_output(AgentType)
-    result = chain.invoke({"question": question})
+    chain = prompt | llm.with_structured_output(AgentType)
+    result = chain.invoke({"input": question, 'messages' : messages})
 
     logger.info(f"Choose Agent: {result.agent}")
     return result.agent

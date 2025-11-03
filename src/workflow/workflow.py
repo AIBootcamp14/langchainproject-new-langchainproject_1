@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import Dict, List, Literal, Optional, TypedDict
+from typing import Dict, List, Literal, Optional, TypedDict, Annotated
 
 from langgraph.graph import END, StateGraph
+from langgraph.graph.message import add_messages
 
 from src.agents.financial_analyst import FinancialAnalyst
 from src.agents.quality_evaluator import QualityEvaluator
@@ -36,6 +37,8 @@ class WorkflowState(TypedDict, total=False):
     retries : int  # 루프 재시도 횟수
     previous_failure_reason: str  # 이전 실패 이유 (연속 실패 감지용)
     consecutive_same_failures: int  # 동일 실패 연속 횟수 
+    messages : Annotated[list, add_messages]
+    agent_scratchpad : Annotated[list, add_messages]
     
 
 
@@ -138,10 +141,11 @@ class Workflow:
     def financial_analyst_node(self, state: WorkflowState) -> WorkflowState:
         """재무 분석 에이전트를 실행 후, report_generator를 호출합니다."""
         question = state.get("question", "")
+        messages = state.get('messages', [])
         logger.info(f"🔍 financial_analyst_node 시작")
 
         try:
-            analysis_data = self.financial_analyst.analyze(question)
+            analysis_data = self.financial_analyst.analyze(query=question, messages=messages)
             # 중요: 반환값 확인
             logger.info(f"📊 analyze() 반환 타입: {type(analysis_data)}")
             logger.debug(f"📊 analyze() 반환 값: {analysis_data}")
@@ -168,6 +172,7 @@ class Workflow:
     def report_generator_node(self, state: WorkflowState) -> WorkflowState:
         """RAG 검색 혹은 report 작성을 수행하여 최종 답변을 생성합니다."""
         question = state.get("question", "")
+        messages = state.get('messages', [])
         logger.info(f"📝 report_generator_node 진입")
         logger.info(f"📝 request_type: {state.get('request_type', 'NOT SET')}")
         
@@ -181,7 +186,7 @@ class Workflow:
 
                 # financial_analyst를 직접 호출해서 웹 검색 시도
                 try:
-                    analysis_data = self.financial_analyst.analyze(question)
+                    analysis_data = self.financial_analyst.analyze(query=question, messages = messages)
 
                     if analysis_data and isinstance(analysis_data, dict):
                         logger.info("✅ financial_analyst 폴백 성공")
@@ -236,7 +241,7 @@ class Workflow:
 
         # 보고서 생성 with 에러 처리
         try:
-            report = self.report_generator.generate_report(question, analysis_data)
+            report = self.report_generator.generate_report(user_request=question, analysis_data=analysis_data, messages = messages)
 
             if not report or not isinstance(report, dict):
                 logger.error("❌ report_generator가 유효하지 않은 데이터 반환")
@@ -273,12 +278,29 @@ class Workflow:
 
             state["previous_failure_reason"] = current_failure
             state["retries"] = state.get("retries", 0) + 1
+            if state['retries'] >= 2:
+                logger.warning(
+                    f"⚠️ 실패 횟수가 {state['retries']}회 반복됨에도 불구하고 기준 미만 답변생성으로 인하여 조기 종료."
+                )
+                state['answer'] = (
+                    "죄송합니다. 여러 시도에도 만족스러운 답변을 생성하지 못했습니다.\n\n"
+                    "질문을 더 구체적으로 작성하시거나, 다른 방식으로 표현해주시면 더 나은 답변을 드릴 수 있습니다."
+                )
+                state['route'] = 'end'
+                return state
+                
 
             # 같은 이유로 2번 이상 실패하면 조기 종료
             if state["consecutive_same_failures"] >= 2:
                 logger.warning(
                     f"⚠️ 동일한 실패 사유 ({current_failure})가 {state['consecutive_same_failures']}회 반복됨. 조기 종료."
                 )
+                state["answer"] = (
+                    "죄송합니다. 여러 시도에도 만족스러운 답변을 생성하지 못했습니다.\n\n"
+                    "질문을 더 구체적으로 작성하시거나, 다른 방식으로 표현해주시면 더 나은 답변을 드릴 수 있습니다."
+                )
+                state["route"] = "end"
+
                 if current_failure == "error":
                     state["answer"] = (
                         "죄송합니다. 시스템에서 해당 질문을 처리하는 데 반복적으로 문제가 발생했습니다.\n\n"
@@ -320,6 +342,7 @@ class Workflow:
             state["retries"] = 0
             state["consecutive_same_failures"] = 0
             state["previous_failure_reason"] = ""
+            state['route'] = 'end'
 
         return state
 
@@ -344,7 +367,7 @@ class Workflow:
     # ------------------------------------------------------------------ #
     # Public API
     # ------------------------------------------------------------------ #
-    def run(self, question: str) -> WorkflowState:
+    def run(self, question: str, chat_previous:list) -> WorkflowState:
         """사용자 질문에 따른 그래프를 실행한 뒤 최종 상태를 반환합니다."""
         # 질문 시작 구분선
         logger.info("=" * 80)
@@ -361,6 +384,8 @@ class Workflow:
             "rag_search_results": [],
             "consecutive_same_failures": 0,  # 연속 실패 카운터 초기화
             "previous_failure_reason": "",  # 이전 실패 이유 초기화
+            "messages" : chat_previous,
+            "agent_scratchpad": []
         }
 
         result = self.graph.invoke(initial_state)

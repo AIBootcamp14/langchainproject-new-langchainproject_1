@@ -10,6 +10,7 @@ import os
 
 from typing import Dict, Any, Optional
 from langchain.agents import AgentExecutor, create_react_agent
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 from src.agents.tools.report_tools import report_tools
 from src.model.llm import get_llm_manager
@@ -65,7 +66,12 @@ class ReportGenerator:
 
         # LLM Manager에서 프롬프트 가져오기
         llm_manager = get_llm_manager()
-        prompt = llm_manager.get_prompt("report_generator")
+        base_prompt = llm_manager.get_prompt("report_generator")
+        prompt = ChatPromptTemplate.from_messages([
+        ("system", base_prompt.template),
+        MessagesPlaceholder('messages'),
+        ("human", "User Query: {input}"),
+        ])
         
         agent = create_react_agent(
             llm=self.llm,
@@ -129,11 +135,14 @@ Check for spaces, markdown, or typos!"""
     def generate_report(
         self,
         user_request: str,
-        analysis_data: Dict[str, Any]
+        analysis_data: Dict[str, Any],
+        messages:list = None,
     ) -> Dict[str, Any]:
         """
         분석 데이터를 기반으로 보고서를 생성합니다.
         """
+        if messages == None:
+            messages = []
         try:
             logger.info(f"보고서 생성 시작 - request: {user_request[:50]}...")
 
@@ -196,7 +205,13 @@ Check for spaces, markdown, or typos!"""
             # 필터링된 도구로 임시 에이전트 생성
             from langchain.agents import create_react_agent, AgentExecutor
             llm_manager = get_llm_manager()
-            prompt = llm_manager.get_prompt("report_generator")
+            base_prompt = llm_manager.get_prompt("report_generator")
+
+            prompt = ChatPromptTemplate.from_messages([
+            ("system", base_prompt.template),
+            MessagesPlaceholder('messages'),
+            ("human", "User Query: {input}"),
+            ])
 
             temp_agent = create_react_agent(
                 llm=self.llm,
@@ -216,7 +231,8 @@ Check for spaces, markdown, or typos!"""
 
             result = temp_executor.invoke({
                 "input": user_request,
-                "analysis_data": analysis_json
+                "analysis_data": analysis_json,
+                "messages": messages
             })
 
             output = result.get("output", "보고서 생성에 실패했습니다.")

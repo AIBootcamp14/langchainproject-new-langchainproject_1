@@ -12,6 +12,7 @@ Financial Analyst Agent
 
 from typing import Dict, Any, Optional, List
 from langchain.agents import AgentExecutor, create_react_agent
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 from src.agents.tools.financial_tools import financial_tools
 from src.model.llm import get_llm_manager
@@ -47,8 +48,15 @@ class FinancialAnalyst:
 
         # LLM Manager에서 프롬프트 가져오기
         llm_manager = get_llm_manager()
-        prompt = llm_manager.get_prompt("financial_analyst")
-        
+        base_prompt = llm_manager.get_prompt("financial_analyst")
+
+        prompt = ChatPromptTemplate.from_messages([
+        ("system", base_prompt.template),
+        MessagesPlaceholder('messages'),
+        ("human", "User Query: {input}"),
+        ])
+
+
         agent = create_react_agent(
             llm=self.llm,
             tools=self.tools,
@@ -107,7 +115,7 @@ Check for spaces, markdown, or typos!"""
         
         return agent_executor
         
-    def analyze(self, query: str) -> Dict[str, Any]:
+    def analyze(self, query: str, messages:list = None) -> Dict[str, Any]:
         """
         주어진 질문에 대해 금융 분석을 수행합니다.
         
@@ -117,11 +125,13 @@ Check for spaces, markdown, or typos!"""
         Returns:
             분석 결과를 담은 딕셔너리
         """
+        if messages == None:
+            messages = []
         try:
             logger.info(f"분석 시작 - query: {query}")
             
             # 에이전트 실행
-            result = self.agent_executor.invoke({"input": query})
+            result = self.agent_executor.invoke({"input": query, "messages": messages})
             
             # 결과 추출
             output = result.get("output", {})
@@ -223,7 +233,7 @@ Check for spaces, markdown, or typos!"""
                 "period": "3mo"
             }
     
-    def compare_stocks(self, tickers: List[str]) -> Dict[str, Any]:
+    def compare_stocks(self, tickers: List[str], messages:list) -> Dict[str, Any]:
         """
         여러 주식을 비교 분석합니다.
         
@@ -240,7 +250,7 @@ Check for spaces, markdown, or typos!"""
             ticker_str = ", ".join(tickers)
             query = f"{ticker_str} 주식들을 비교 분석해주세요. 각각의 장단점과 투자 추천을 포함해주세요."
             
-            return self.analyze(query)
+            return self.analyze(query=query, messages = messages)
         
         except Exception as e:
             logger.error(f"비교 분석 실패 - tickers: {tickers}, error: {str(e)}")
@@ -251,7 +261,7 @@ Check for spaces, markdown, or typos!"""
                 "comparison_analysis": f"비교 분석 중 오류가 발생했습니다: {str(e)}"
             }
     
-    def invoke(self, query: str) -> Dict[str, Any]:
+    def invoke(self, query: str, messages : list) -> Dict[str, Any]:
         """
         analyze()의 별칭 메서드 (LangChain 스타일 호환)
         
@@ -261,7 +271,7 @@ Check for spaces, markdown, or typos!"""
         Returns:
             분석 결과 딕셔너리
         """
-        return self.analyze(query)
+        return self.analyze(query=query, messages=messages)
 
 
 # 편의를 위한 팩토리 함수

@@ -135,10 +135,8 @@ CRITICAL - Array closing:
 CORRECT: ..."Buy"}}, {{..."Hold"}}], "comparison_summary"...  <- Note the ] after last }}
 WRONG: ..."Buy"}}, {{..."Hold"}}, "comparison_summary"...     <- Missing ] causes parsing error
 
-User Query: {input}
-
 {agent_scratchpad}""",
-            input_variables=["input", "tools", "tool_names", "agent_scratchpad"]
+            input_variables=["'agent_scratchpad'","tools", "tool_names"]
         )
 
 
@@ -220,10 +218,9 @@ REMEMBER:
    - User Query in English → Final Answer in English
 
 Analysis Data: {analysis_data}
-User Query: {input}
 
 {agent_scratchpad}""",
-            input_variables=["input", "analysis_data", "tools", "tool_names", "agent_scratchpad"]
+            input_variables=["analysis_data", "tools", "tool_names", "agent_scratchpad"]
         )
 
 
@@ -241,11 +238,7 @@ User Query: {input}
 - 암호화폐/블록체인 기술 자체는 `not_finance`이지만, 가격/투자/거래/시장 동향을 묻는다면 `finance`.
 - 질문이 모호하면 사용자 의도가 금융일 가능성이 있는지 보수적으로 판단하되, 근거가 부족하면 `not_finance`
 
-출력은 구조화된 형식으로만 반환하십시오. 추가 설명이나 여분 텍스트를 포함하지 마십시오.
-
-사용자 질문:
-{question}""",
-            input_variables=["question"]
+출력은 구조화된 형식으로만 반환하십시오. 추가 설명이나 여분 텍스트를 포함하지 마십시오."""
         )
 
 
@@ -264,15 +257,10 @@ User Query: {input}
 3) 재무 계산, 종목 비교, 종목 코드 찾기, 기업 비교 등, 재무 분석 중심이면 financial_analyst를 우선 선택
 4) 출력은 반드시 JSON 형식만 반환 (설명, 여분 텍스트 금지)
 
-사용자 질문:
-{question}
-
 출력 형식(JSON)
 {{
     "agent": "vector_search_agent" or "financial_analyst" or "none"
-}}""",
-            input_variables=["question"]
-        )
+}}""")
 
 
 
