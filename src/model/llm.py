@@ -94,12 +94,23 @@ WRONG (DO NOT DO):
 - Writing Action + Observation together
 - Using ```json in Final Answer
 
-WORKFLOW:
+WORKFLOW - Choose based on query type:
+
+TYPE A: Concept/Definition Questions (e.g., "나스닥이 뭐야?", "What is ETF?", "레버리지 ETF란?")
+1. Use web_search to find definition/explanation, then STOP
+2. Return Final Answer with analysis_type: "concept" or "definition"
+   Format: {{"analysis_type": "concept", "query": "...", "analysis": "웹 검색 결과 기반 설명..."}}
+
+TYPE B: Stock Analysis Questions (e.g., "애플 주식 분석", "삼성전자와 애플 비교")
 1. If ticker unknown → search_stocks, then STOP
 2. Get stock data → get_stock_info, then STOP
 3. Optional: get_historical_prices, then STOP
 4. Optional: get_analyst_recommendations, then STOP
 5. Return Final Answer as JSON (NO code blocks!)
+
+IMPORTANT:
+- If query asks "What is X?" or "X이/가 뭐야?" → TYPE A (use web_search FIRST)
+- If query asks about specific stocks/companies → TYPE B (use stock tools)
 
 FINAL ANSWER FORMAT (CRITICAL - NO CODE BLOCKS):
 CORRECT - Plain JSON only:
@@ -111,7 +122,10 @@ Final Answer:
 {{...}}
 ```
 
-Single stock format:
+Concept/Definition format (for TYPE A queries):
+{{"analysis_type": "concept", "query": "나스닥이 뭐야?", "analysis": "나스닥(NASDAQ)은 미국의 전자 주식 거래소입니다. National Association of Securities Dealers Automated Quotations의 약자로..."}}
+
+Single stock format (for TYPE B queries):
 {{"analysis_type": "single", "ticker": "AAPL", "company_name": "Apple Inc.", "current_price": 178.25, "analysis": "Detailed analysis text...", "metrics": {{"pe_ratio": 29.5, "market_cap": 2800000000000, "52week_high": 199.62, "52week_low": 164.08, "sector": "Technology", "industry": "Consumer Electronics"}}, "period": "3mo", "analyst_recommendation": "Buy"}}
 
 Comparison format - CRITICAL: Close stocks array with ] before comparison_summary:
@@ -282,6 +296,158 @@ User Query: {input}
 
 평가 점수:""",
             input_variables=["question", "answer"]
+        )
+        
+        # Query Rewrite 프롬프트
+        self._prompts["rewrite_query"] = PromptTemplate(
+            template="""당신은 금융 도메인 질문을 같은 의미를 유지한 채 다른 표현으로 재작성하는 전문가입니다.
+
+            입력 정보를 기반으로 간결하고 자연스러운 새로운 질문을 한 문장으로만 출력하세요.
+            - 원문의 핵심 의도를 유지하면서 표현만 바꿉니다.
+            - 금융 용어, 종목명, 숫자 등은 정확히 보존합니다.
+            - 추가 설명, 불필요한 마크다운, 따옴표는 사용하지 않습니다.
+
+            출력 스키마:
+            - rewritten_query (string): 재작성된 질문
+
+            실패 원인: {failure_reason}
+            원본 질문: {original_query}
+
+            관련 대화:
+            {chat_history}""",
+            input_variables=["original_query", "failure_reason", "chat_history"]
+        )
+
+        # Report Direct - Single Stock 프롬프트
+        self._prompts["report_direct_single"] = PromptTemplate(
+            template="""다음 주식 분석 데이터를 바탕으로 전문적인 마크다운 형식의 보고서를 작성해주세요.
+
+분석 데이터:
+```json
+{analysis_json}
+```
+
+다음 구조로 상세한 보고서를 작성해주세요:
+
+## {{company_name}} ({{ticker}}) 주식 분석 보고서
+
+### 1. 기업 개요
+- 회사명, 티커, 섹터, 산업 정보 정리
+
+### 2. 주가 정보
+- 현재가, 52주 최고/최저, 거래량 등
+
+### 3. 밸류에이션 지표
+- P/E Ratio, 시가총액, 배당수익률 등
+
+### 4. 분석 의견
+- 제공된 analysis 내용을 상세히 설명
+
+### 5. 최신 뉴스 요약
+- news_summary 내용 정리 (있는 경우)
+
+### 6. 애널리스트 추천
+- analyst_recommendation 내용
+
+### 7. 투자 의견
+- 전체 데이터를 종합한 투자 의견 및 리스크 요인
+
+**요구사항:**
+- 최소 300단어 이상
+- 마크다운 형식 사용
+- 구체적인 수치 포함
+- 전문적이고 객관적인 톤
+""",
+            input_variables=["analysis_json"]
+        )
+
+        # Report Direct - Comparison 프롬프트
+        self._prompts["report_direct_comparison"] = PromptTemplate(
+            template="""다음 주식 비교 분석 데이터를 바탕으로 전문적인 마크다운 형식의 비교 보고서를 작성해주세요.
+
+분석 데이터:
+```json
+{analysis_json}
+```
+
+다음 구조로 상세한 비교 보고서를 작성해주세요:
+
+## 주식 비교 분석 보고서: {tickers}
+
+### 1. 비교 대상 개요
+- 각 주식의 기본 정보 (회사명, 티커, 섹터, 산업)
+
+### 2. 주가 비교
+- 현재가, 52주 최고/최저 비교
+- 주가 위치 분석
+
+### 3. 밸류에이션 비교
+- P/E Ratio, 시가총액 등 주요 지표 비교
+- 표 형식 권장
+
+### 4. 개별 주식 분석
+- 각 주식의 장단점 상세 분석
+
+### 5. 종합 비교 분석
+- comparison_summary 또는 comparison_analysis 내용 정리
+- 상대적 강점/약점 비교
+
+### 6. 투자 추천
+- 추천 주식 및 이유
+- 리스크 분석
+- 투자 전략 제안
+
+**요구사항:**
+- 최소 400단어 이상
+- 마크다운 형식 사용
+- 구체적인 수치 비교
+- 전문적이고 객관적인 톤
+- 비교 표 사용 권장
+""",
+            input_variables=["analysis_json", "tickers"]
+        )
+
+        # Report Direct - RAG 프롬프트
+        self._prompts["report_direct_rag"] = PromptTemplate(
+            template="""당신은 금융 분야 RAG 요약 전문가입니다. 아래 사용자 질문과 검색된 문서 내용을 토대로 간결한 마크다운 보고서를 작성하세요.
+
+[사용자 질문]
+{query}
+
+[검색 문서]
+{documents_block}
+
+보고서 지침:
+1. 사용자 질문과 동일한 언어로 작성하세요.
+2. 제목은 '## RAG 기반 금융 요약'으로 시작합니다.
+3. '### 주요 인사이트', '### 근거', '### 추가 제안' 세 섹션을 포함하세요.
+4. 문서에서 확인된 사실만 사용하고 추측은 금지합니다.
+5. 핵심 수치나 인용은 bullet 형태로 명확하게 정리하세요.
+""",
+            input_variables=["query", "documents_block"]
+        )
+
+        # Report Direct - Concept/Definition 프롬프트
+        self._prompts["report_direct_concept"] = PromptTemplate(
+            template="""당신은 금융 전문가입니다. 다음 질문에 대해 전문적인 마크다운 보고서를 작성해주세요.
+
+질문: {query}
+
+참고 정보:
+{analysis_text}
+
+보고서 작성 지침:
+1. 제목: "## {query}"로 시작
+2. 구조:
+   - ### 개념 설명 (정의, 의미)
+   - ### 주요 특징 (있는 경우)
+   - ### 실제 활용 또는 예시 (있는 경우)
+3. 핵심 포인트는 bullet point로 명확하게
+4. 전문적이고 읽기 쉬운 형식
+5. 참고 정보가 "정보 없음"인 경우, 당신의 금융 지식을 활용하여 정확한 정보 제공
+6. 최소 200자 이상의 상세한 설명 작성
+""",
+            input_variables=["query", "analysis_text"]
         )
 
 

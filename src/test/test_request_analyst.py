@@ -163,7 +163,7 @@ def test_rewrite_query():
 
         needs_input = result.get("needs_user_input", False)
         rewritten = result.get("rewritten_query", "")
-        user_question = result.get("user_question")
+        request_for_detail_msg = result.get("request_for_detail_msg")
 
         passed = needs_input == case["expected_needs_input"]
 
@@ -173,8 +173,8 @@ def test_rewrite_query():
         logger.info(f"예상 needs_user_input: {case['expected_needs_input']}")
         logger.info(f"실제 needs_user_input: {needs_input}")
         logger.info(f"재작성 쿼리: {rewritten}")
-        if user_question:
-            logger.info(f"유저 질문: {user_question}")
+        if request_for_detail_msg:
+            logger.info(f"유저에게 디테일한 질문 재요청: {request_for_detail_msg}")
         logger.info(f"결과: {status}")
 
     # 결과 요약

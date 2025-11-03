@@ -220,8 +220,17 @@ Industry: {metrics.get('industry', 'N/A')}"""
             ax2.axvline(x=50, color='red', linestyle='--', alpha=0.5, linewidth=1)
 
             # 3. 주요 지표 비교 (P/E Ratio & Market Cap)
-            pe_ratios = [s.get('metrics', {}).get('pe_ratio', 0) for s in stocks]
-            market_caps = [s.get('metrics', {}).get('market_cap', 0) / 1e12 for s in stocks]  # 조 단위
+            # None 처리를 명시적으로 수행
+            pe_ratios = []
+            market_caps = []
+            for s in stocks:
+                metrics = s.get('metrics', {})
+                pe = metrics.get('pe_ratio')
+                cap = metrics.get('market_cap')
+
+                # None을 0으로 변환
+                pe_ratios.append(pe if pe is not None else 0)
+                market_caps.append((cap if cap is not None else 0) / 1e12)
 
             x = np.arange(len(tickers))
             width = 0.35
@@ -233,18 +242,26 @@ Industry: {metrics.get('industry', 'N/A')}"""
             bars2 = ax3_twin.bar(x + width/2, market_caps, width, label='Market Cap ($T)',
                                 color='#ff7f0e', alpha=0.7, edgecolor='black', linewidth=1.5)
 
-            # 값 레이블
+            # 값 레이블 - None 체크 추가
             for bar, pe in zip(bars1, pe_ratios):
                 height = bar.get_height()
-                ax3.text(bar.get_x() + bar.get_width()/2., height,
-                        f'{pe:.1f}',
-                        ha='center', va='bottom', fontsize=8)
+                if height is not None:
+                    x_pos = bar.get_x()
+                    width_val = bar.get_width()
+                    if x_pos is not None and width_val is not None:
+                        ax3.text(x_pos + width_val/2., height,
+                                f'{pe:.1f}',
+                                ha='center', va='bottom', fontsize=8)
 
             for bar, cap in zip(bars2, market_caps):
                 height = bar.get_height()
-                ax3_twin.text(bar.get_x() + bar.get_width()/2., height,
-                             f'{cap:.2f}T',
-                             ha='center', va='bottom', fontsize=8)
+                if height is not None:
+                    x_pos = bar.get_x()
+                    width_val = bar.get_width()
+                    if x_pos is not None and width_val is not None:
+                        ax3_twin.text(x_pos + width_val/2., height,
+                                     f'{cap:.2f}T',
+                                     ha='center', va='bottom', fontsize=8)
 
             ax3.set_title('Key Metrics Comparison', fontsize=14, fontweight='bold')
             ax3.set_xlabel('Stock', fontsize=12)
@@ -492,12 +509,27 @@ def _calculate_single_stock_scores(data: Dict[str, Any]) -> Dict[str, float]:
     업계 일반적 기준 대비 평가
     """
     metrics = data.get('metrics', {})
-    current_price = data.get('current_price', 0)
-    
-    market_cap = metrics.get('market_cap', 0)
-    pe_ratio = metrics.get('pe_ratio', 20)
-    high_52w = metrics.get('52week_high', 0)
-    low_52w = metrics.get('52week_low', 0)
+    current_price = data.get('current_price')
+    if current_price is None:
+        current_price = 0
+
+    # None 체크를 명시적으로 수행
+    market_cap = metrics.get('market_cap')
+    if market_cap is None or market_cap <= 0:
+        market_cap = 0
+
+    pe_ratio = metrics.get('pe_ratio')
+    if pe_ratio is None or pe_ratio <= 0:
+        pe_ratio = 20
+
+    high_52w = metrics.get('52week_high')
+    if high_52w is None:
+        high_52w = 0
+
+    low_52w = metrics.get('52week_low')
+    if low_52w is None:
+        low_52w = 0
+
     sector = metrics.get('sector', '').lower()
     recommendation = data.get('analyst_recommendation', '').lower()
     
@@ -600,18 +632,33 @@ def _calculate_comparative_scores(stocks: list) -> tuple:
     all_pe_ratios = []
     all_market_caps = []
     all_momentum_raw = []
-    
+
     for stock in stocks:
         metrics = stock.get('metrics', {})
-        pe_ratio = metrics.get('pe_ratio', 20)
-        market_cap = metrics.get('market_cap', 1e9)
-        current_price = stock.get('current_price', 0)
-        high_52w = metrics.get('52week_high', 0)
-        low_52w = metrics.get('52week_low', 0)
-        
-        all_pe_ratios.append(pe_ratio if pe_ratio > 0 else 20)
+        # None 체크를 명시적으로 수행
+        pe_ratio = metrics.get('pe_ratio')
+        if pe_ratio is None or pe_ratio <= 0:
+            pe_ratio = 20
+
+        market_cap = metrics.get('market_cap')
+        if market_cap is None or market_cap <= 0:
+            market_cap = 1e9
+
+        current_price = stock.get('current_price')
+        if current_price is None:
+            current_price = 0
+
+        high_52w = metrics.get('52week_high')
+        if high_52w is None:
+            high_52w = 0
+
+        low_52w = metrics.get('52week_low')
+        if low_52w is None:
+            low_52w = 0
+
+        all_pe_ratios.append(pe_ratio)
         all_market_caps.append(market_cap)
-        
+
         # Momentum 계산
         if high_52w > 0 and low_52w > 0 and high_52w > low_52w and current_price > 0:
             momentum = (current_price - low_52w) / (high_52w - low_52w)
