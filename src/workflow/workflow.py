@@ -206,6 +206,15 @@ class Workflow:
 
         if not state["quality_passed"]:
             state["retries"] = state.get("retries", 0) + 1
+            
+            # 재시도 횟수 체크를 여기서 먼저 수행
+            if state["retries"] > 3:
+                logger.warning(f"⚠️ 재시도 횟수 초과 (총 {state['retries']}회). 루프 종료.")
+                state["answer"] = "3회 재시도에도 품질 기준을 충족하지 못했습니다. 답변을 종료합니다."
+                state["route"] = "end"
+                return state
+            
+            # 재시도 가능한 경우에만 쿼리 재작성
             rewrite_result = rewrite_query(
                 original_query=question,
                 failure_reason=result.get("failure_reason", "incorrect"),
@@ -225,8 +234,10 @@ class Workflow:
             else:
                 state["question"] = rewrite_result.get("rewritten_query", question)
                 state["answer"] = "질문을 다시 정제했습니다. 재시도합니다."
+                state["route"] = "retry"  
         else:
-            state["retries"] = 0        
+            state["retries"] = 0
+            state["route"] = "end"  
             
         return state
 
@@ -244,23 +255,9 @@ class Workflow:
         품질 평가 결과에 따라 재시도 여부를 결정합니다.
         최대 3회까지만 재시도하며, 이후에는 강제로 종료합니다.
         """
-        retries = state.get("retries", 0)  # 기본값 0
-        quality_passed = state.get("quality_passed", False)
-        
-        logger.info("quality_passed 여부: %s", quality_passed)
-        # 품질 통과 시 즉시 종료
-        if quality_passed:
-            return "end"
-
-        # 품질 미통과 + 재시도 3회 미만이면 retry
-        if retries < 3:
-            logger.info("retries 횟수: %s  3회 미만까지는 retry 시도", state["retries"])
-            return "retry"
-
-        # 품질 미통과 + 재시도 3회 초과 → 강제 종료
-        logger.warning(f"⚠️ 재시도 횟수 초과 (총 {retries}회). 루프 종료.")
-        state["answer"] = "3회 재시도에도 품질 기준을 충족하지 못했습니다. 답변을 종료합니다."
-        return "end"
+        route = state.get("route", "end")
+        logger.info(f"품질 평가 후 라우팅: {route}")
+        return route  
 
     # ------------------------------------------------------------------ #
     # Public API
@@ -298,7 +295,11 @@ if __name__ == "__main__":
         # "레버리지 ETF의 위험성을 설명해줘" 
         # "삼성전자와 애플의 최근 주가를 비교 후, 간단하게 차트를 그려줘",
         # "나스닥이 뭐야?",
-        "모바일로 주식 거래하는 앱은 뭐라고 하나요?"
+        # "모바일로 주식 거래하는 앱은 뭐라고 하나요?",
+        # "오늘 날씨가 어때?",
+        "AI 시장 투자 규모가 어떻게 돼 ?",
+        # "애플과 마이크로소프트 비교 분석 보고서를 작성해주세요",
+        # "애플 주식 분석 보고서를 차트와 함께 PDF로 저장해주세요"
     ]
 
     for question in sample_questions:
