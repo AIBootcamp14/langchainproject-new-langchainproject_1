@@ -20,9 +20,9 @@ logger = get_logger(__name__)
 
 class WorkflowState(TypedDict, total=False):
     """LangGraph에서 주고받는 기본 상태 구조.
-    
-    *** 개인적으로 필요한 상태 값들은 아래에 주석과 함께 추가 부탁드리겠습니다.*** 
-    
+
+    *** 개인적으로 필요한 상태 값들은 아래에 주석과 함께 추가 부탁드리겠습니다.***
+
     """
     session_id: str # 사용자 세션 id
     question: str # 사용자의 질문
@@ -31,9 +31,11 @@ class WorkflowState(TypedDict, total=False):
     request_type: Literal["rag", "financial_analyst"]  # report_generator 의 2가지 task 분기
     rag_search_results: List[str]  # Rag 의 검색 결과
     analysis_data: Dict[str, object] # Rag 혹은 financial_analyst 의 최종 분석 결과
-    quality_passed: bool       # quality_evaluator 에서의 품질 통과 여부  
+    quality_passed: bool       # quality_evaluator 에서의 품질 통과 여부
     quality_detail: Dict[str, object]  # quality_evaluator 의 평가 결과 디테일
-    retries : int  # 루프 재시도 횟수 
+    retries : int  # 루프 재시도 횟수
+    previous_failure_reason: str  # 이전 실패 이유 (연속 실패 감지용)
+    consecutive_same_failures: int  # 동일 실패 연속 횟수 
     
 
 
@@ -137,19 +139,30 @@ class Workflow:
         """재무 분석 에이전트를 실행 후, report_generator를 호출합니다."""
         question = state.get("question", "")
         logger.info(f"🔍 financial_analyst_node 시작")
-        analysis_data = self.financial_analyst.analyze(question)
-         # 중요: 반환값 확인
-        logger.info(f"📊 analyze() 반환 타입: {type(analysis_data)}")
-        logger.info(f"📊 analyze() 반환 값: {analysis_data}")
-    
-        state["analysis_data"] = analysis_data
-        state["request_type"] = "financial_analyst"
-        logger.debug(f"재무 분석 에이전트 분석 결과 data : {analysis_data}")
-        # 저장 후 확인 (중요!)
-        logger.info(f"✅ state에 저장 완료")
-        logger.info(f"✅ state['analysis_data'] 확인: {state.get('analysis_data', 'NOT FOUND')}")
-        # summary = analysis.get("summary") or analysis.get("final_answer") or str(analysis)
-        # state["answer"] = summary
+
+        try:
+            analysis_data = self.financial_analyst.analyze(question)
+            # 중요: 반환값 확인
+            logger.info(f"📊 analyze() 반환 타입: {type(analysis_data)}")
+            logger.debug(f"📊 analyze() 반환 값: {analysis_data}")
+
+            # 데이터 유효성 검증
+            if not analysis_data or not isinstance(analysis_data, dict):
+                logger.error("❌ financial_analyst가 유효하지 않은 데이터 반환")
+                state["answer"] = "죄송합니다. 주식 분석 중 문제가 발생했습니다. 다시 시도해주세요."
+                state["route"] = "end"
+                return state
+
+            state["analysis_data"] = analysis_data
+            state["request_type"] = "financial_analyst"
+            logger.info(f"✅ state에 저장 완료")
+            logger.debug(f"✅ state['analysis_data'] 확인: {state.get('analysis_data', 'NOT FOUND')}")
+
+        except Exception as e:
+            logger.error(f"❌ financial_analyst_node 실행 중 오류: {e}", exc_info=True)
+            state["answer"] = f"주식 분석 중 오류가 발생했습니다: {str(e)}"
+            state["route"] = "end"
+
         return state
 
     def report_generator_node(self, state: WorkflowState) -> WorkflowState:
@@ -161,23 +174,54 @@ class Workflow:
         if state.get("request_type","rag") == "rag":
             logger.info("📝 RAG 모드")
             results = self.retriever.retrieve(question)
-            rag_search_results = []
-            for doc, score in results:
-                page = doc.metadata.get("page", "?")
-                if isinstance(page, int):
-                    page += 1  # 0-index → 1-index 변환
-                source = doc.metadata.get("source", "unknown")
-                rag_search_results.append(f"- (score={score:.2f}) {source} p.{page}")
 
-            state["rag_search_results"] = rag_search_results
-            
-            analysis_data = {
-            "analysis_type" : "rag",
-            "query": question,
-            "documents": [doc.page_content for doc, _ in results],
-            }
-            
-            state["analysis_data"] = analysis_data
+            # RAG 검색 결과가 없을 때 financial_analyst로 폴백
+            if not results or len(results) == 0:
+                logger.warning("⚠️ RAG 검색 결과가 없습니다. financial_analyst로 폴백 시도...")
+
+                # financial_analyst를 직접 호출해서 웹 검색 시도
+                try:
+                    analysis_data = self.financial_analyst.analyze(question)
+
+                    if analysis_data and isinstance(analysis_data, dict):
+                        logger.info("✅ financial_analyst 폴백 성공")
+                        state["analysis_data"] = analysis_data
+                        state["request_type"] = "financial_analyst"
+                        # 이제 아래 else 블록에서 처리됨
+                    else:
+                        logger.error("❌ financial_analyst 폴백 실패 - 분석 데이터 없음")
+                        state["answer"] = (
+                            "죄송합니다. 데이터베이스와 웹 검색 모두에서 관련 정보를 찾을 수 없습니다.\n\n"
+                            "다른 주제로 질문해주시거나, 질문을 더 구체적으로 작성해주세요."
+                        )
+                        return state
+
+                except Exception as e:
+                    logger.error(f"❌ financial_analyst 폴백 중 오류: {e}", exc_info=True)
+                    state["answer"] = (
+                        "죄송합니다. 정보를 찾는 과정에서 오류가 발생했습니다.\n"
+                        "잠시 후 다시 시도해주세요."
+                    )
+                    return state
+            else:
+                # RAG 검색 결과가 있는 경우
+                rag_search_results = []
+                for doc, score in results:
+                    page = doc.metadata.get("page", "?")
+                    if isinstance(page, int):
+                        page += 1  # 0-index → 1-index 변환
+                    source = doc.metadata.get("source", "unknown")
+                    rag_search_results.append(f"- (score={score:.2f}) {source} p.{page}")
+
+                state["rag_search_results"] = rag_search_results
+
+                analysis_data = {
+                "analysis_type" : "rag",
+                "query": question,
+                "documents": [doc.page_content for doc, _ in results],
+                }
+
+                state["analysis_data"] = analysis_data
 
         else:
             # financial_analyst 에서 호출 시, 해당 분석 결과 사용
@@ -185,14 +229,27 @@ class Workflow:
             analysis_data = state.get("analysis_data")
             if not analysis_data:
                 logger.error("❌ analysis_data가 state에 없습니다!")
-                state["answer"] = "분석 데이터(analysis_data)를 찾을 수 없습니다."
+                state["answer"] = "분석 데이터를 찾을 수 없습니다. 다시 시도해주세요."
                 return state
-            
+
             logger.debug(f"✅ State 저장소 analysis_data 로드: {analysis_data.get('analysis_type', 'N/A')}")
-      
-        report = self.report_generator.generate_report(question, analysis_data)
-        state["answer"] = report.get("report", "보고서를 생성하지 못했습니다.")
-        logger.info(f"✅ 보고서 생성 완료 (길이: {len(state['answer'])})")
+
+        # 보고서 생성 with 에러 처리
+        try:
+            report = self.report_generator.generate_report(question, analysis_data)
+
+            if not report or not isinstance(report, dict):
+                logger.error("❌ report_generator가 유효하지 않은 데이터 반환")
+                state["answer"] = "보고서 생성 중 문제가 발생했습니다."
+                return state
+
+            state["answer"] = report.get("report", "보고서를 생성하지 못했습니다.")
+            logger.info(f"✅ 보고서 생성 완료 (길이: {len(state['answer'])})")
+
+        except Exception as e:
+            logger.error(f"❌ 보고서 생성 중 오류: {e}", exc_info=True)
+            state["answer"] = f"보고서 생성 중 오류가 발생했습니다: {str(e)}"
+
         return state
 
     def quality_evaluator_node(self, state: WorkflowState) -> WorkflowState:
@@ -205,19 +262,42 @@ class Workflow:
         state["quality_passed"] = result.get("status") == "pass"
 
         if not state["quality_passed"]:
+            current_failure = result.get("failure_reason", "unknown")
+            previous_failure = state.get("previous_failure_reason", "")
+
+            # 연속 동일 실패 감지
+            if current_failure == previous_failure:
+                state["consecutive_same_failures"] = state.get("consecutive_same_failures", 0) + 1
+            else:
+                state["consecutive_same_failures"] = 1
+
+            state["previous_failure_reason"] = current_failure
             state["retries"] = state.get("retries", 0) + 1
-            
-            # 재시도 횟수 체크를 여기서 먼저 수행
-            if state["retries"] > 3:
-                logger.warning(f"⚠️ 재시도 횟수 초과 (총 {state['retries']}회). 루프 종료.")
-                state["answer"] = "3회 재시도에도 품질 기준을 충족하지 못했습니다. 답변을 종료합니다."
+
+            # 같은 이유로 2번 이상 실패하면 조기 종료
+            if state["consecutive_same_failures"] >= 2:
+                logger.warning(
+                    f"⚠️ 동일한 실패 사유 ({current_failure})가 {state['consecutive_same_failures']}회 반복됨. 조기 종료."
+                )
+                if current_failure == "error":
+                    state["answer"] = (
+                        "죄송합니다. 시스템에서 해당 질문을 처리하는 데 반복적으로 문제가 발생했습니다.\n\n"
+                        "다음을 시도해보세요:\n"
+                        "1. 질문을 다르게 표현해주세요\n"
+                        "2. 더 구체적인 정보를 포함해주세요 (예: 회사명, 날짜 등)\n"
+                        "3. 다른 주제로 질문해주세요"
+                    )
+                else:
+                    state["answer"] = (
+                        "죄송합니다. 여러 시도에도 만족스러운 답변을 생성하지 못했습니다.\n\n"
+                        "질문을 더 구체적으로 작성하시거나, 다른 방식으로 표현해주시면 더 나은 답변을 드릴 수 있습니다."
+                    )
                 state["route"] = "end"
                 return state
-            
-            # 재시도 가능한 경우에만 쿼리 재작성
+
             rewrite_result = rewrite_query(
                 original_query=question,
-                failure_reason=result.get("failure_reason", "incorrect"),
+                failure_reason=current_failure,
                 llm=self.shared_llm,
             )
             logger.info(
@@ -225,7 +305,7 @@ class Workflow:
                 rewrite_result.get("needs_user_input"),
                 rewrite_result.get("rewritten_query"),
             )
-            
+
             if rewrite_result.get("needs_user_input"):
                 state["answer"] = rewrite_result.get(
                     "request_for_detail_msg", "질문을 좀 더 구체적으로 말씀해 주시겠어요? "
@@ -236,9 +316,11 @@ class Workflow:
                 state["answer"] = "질문을 다시 정제했습니다. 재시도합니다."
                 state["route"] = "retry"  
         else:
+            # 성공 시 모든 카운터 초기화
             state["retries"] = 0
-            state["route"] = "end"  
-            
+            state["consecutive_same_failures"] = 0
+            state["previous_failure_reason"] = ""
+
         return state
 
     # ------------------------------------------------------------------ #
@@ -264,8 +346,32 @@ class Workflow:
     # ------------------------------------------------------------------ #
     def run(self, question: str) -> WorkflowState:
         """사용자 질문에 따른 그래프를 실행한 뒤 최종 상태를 반환합니다."""
-        initial_state: WorkflowState = {"question": question}
-        return self.graph.invoke(initial_state)
+        # 질문 시작 구분선
+        logger.info("=" * 80)
+        logger.info(f"🔵 새로운 질문 처리 시작: {question[:50]}..." if len(question) > 50 else f"🔵 새로운 질문 처리 시작: {question}")
+        logger.info("=" * 80)
+
+        # State 초기화 - 모든 필드를 명시적으로 초기화
+        initial_state: WorkflowState = {
+            "question": question,
+            "answer": "",
+            "route": "",
+            "retries": 0,  # 재시도 카운터 초기화
+            "quality_passed": False,
+            "rag_search_results": [],
+            "consecutive_same_failures": 0,  # 연속 실패 카운터 초기화
+            "previous_failure_reason": "",  # 이전 실패 이유 초기화
+        }
+
+        result = self.graph.invoke(initial_state)
+
+        # 질문 종료 구분선
+        logger.info("=" * 80)
+        logger.info(f"🟢 질문 처리 완료 - route: {result.get('route')}, quality_passed: {result.get('quality_passed')}, retries: {result.get('retries', 0)}")
+        logger.info("=" * 80)
+        logger.info("")  # 빈 줄 추가
+
+        return result
 
 
 def build_workflow() -> Workflow:
@@ -290,16 +396,14 @@ __all__ = ["Workflow", "WorkflowState", "build_workflow"]
 if __name__ == "__main__":
     workflow = build_workflow()
     sample_questions = [
-        # "삼성전자와 애플의 최근 실적을 비교해줘",
-        # "경제와 관련 없는 질문입니다",
-        # "레버리지 ETF의 위험성을 설명해줘" 
-        # "삼성전자와 애플의 최근 주가를 비교 후, 간단하게 차트를 그려줘",
-        # "나스닥이 뭐야?",
-        # "모바일로 주식 거래하는 앱은 뭐라고 하나요?",
-        # "오늘 날씨가 어때?",
-        "AI 시장 투자 규모가 어떻게 돼 ?",
-        # "애플과 마이크로소프트 비교 분석 보고서를 작성해주세요",
-        # "애플 주식 분석 보고서를 차트와 함께 PDF로 저장해주세요"
+        "삼성전자와 애플의 최근 실적을 비교해주세요.",
+        "애플 주식 분석 보고서를 차트와 함께 PDF로 저장해줘. 파일명은 너가 생각해서 적절한 걸 정해줘.",
+        "내일 날씨는 뭐야?",
+        "레버리지 ETF의 위험성을 설명해줘",
+        "테슬라 주식을 분석해서 마크다운 파일로 저장해줘. 적절한 파일명으로.",
+        "삼성전자와 애플의 최근 주가를 비교 후, 간단하게 차트를 그리고 pdf파일로 저장해 줘.",
+        "나스닥이 뭐야?",
+        "모바일로 주식 거래하는 앱은 뭐라고 해?"
     ]
 
     for question in sample_questions:

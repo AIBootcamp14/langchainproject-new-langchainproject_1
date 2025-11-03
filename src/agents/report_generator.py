@@ -305,140 +305,101 @@ An error occurred: {str(e)}
         logger.info("직접 보고서 생성 시작")
 
         analysis_type = analysis_data.get("analysis_type", "single")
-
-        if analysis_type == "single":
-            # 단일 주식 보고서 생성
-            prompt = f"""다음 주식 분석 데이터를 바탕으로 전문적인 마크다운 형식의 보고서를 작성해주세요.
-
-분석 데이터:
-```json
-{json.dumps(analysis_data, ensure_ascii=False, indent=2)}
-```
-
-다음 구조로 상세한 보고서를 작성해주세요:
-
-## {{company_name}} ({{ticker}}) 주식 분석 보고서
-
-### 1. 기업 개요
-- 회사명, 티커, 섹터, 산업 정보 정리
-
-### 2. 주가 정보
-- 현재가, 52주 최고/최저, 거래량 등
-
-### 3. 밸류에이션 지표
-- P/E Ratio, 시가총액, 배당수익률 등
-
-### 4. 분석 의견
-- 제공된 analysis 내용을 상세히 설명
-
-### 5. 최신 뉴스 요약
-- news_summary 내용 정리 (있는 경우)
-
-### 6. 애널리스트 추천
-- analyst_recommendation 내용
-
-### 7. 투자 의견
-- 전체 데이터를 종합한 투자 의견 및 리스크 요인
-
-**요구사항:**
-- 최소 300단어 이상
-- 마크다운 형식 사용
-- 구체적인 수치 포함
-- 전문적이고 객관적인 톤
-"""
-        elif analysis_type == "comparison":
-            # 비교 분석 보고서 생성
-            stocks = analysis_data.get("stocks", [])
-            tickers = [s.get("ticker") for s in stocks]
-
-            prompt = f"""다음 주식 비교 분석 데이터를 바탕으로 전문적인 마크다운 형식의 비교 보고서를 작성해주세요.
-
-분석 데이터:
-```json
-{json.dumps(analysis_data, ensure_ascii=False, indent=2)}
-```
-
-다음 구조로 상세한 비교 보고서를 작성해주세요:
-
-## 주식 비교 분석 보고서: {" vs ".join(tickers)}
-
-### 1. 비교 대상 개요
-- 각 주식의 기본 정보 (회사명, 티커, 섹터, 산업)
-
-### 2. 주가 비교
-- 현재가, 52주 최고/최저 비교
-- 주가 위치 분석
-
-### 3. 밸류에이션 비교
-- P/E Ratio, 시가총액 등 주요 지표 비교
-- 표 형식 권장
-
-### 4. 개별 주식 분석
-- 각 주식의 장단점 상세 분석
-
-### 5. 종합 비교 분석
-- comparison_summary 또는 comparison_analysis 내용 정리
-- 상대적 강점/약점 비교
-
-### 6. 투자 추천
-- 추천 주식 및 이유
-- 리스크 분석
-- 투자 전략 제안
-
-**요구사항:**
-- 최소 400단어 이상
-- 마크다운 형식 사용
-- 구체적인 수치 비교
-- 전문적이고 객관적인 톤
-- 비교 표 사용 권장
-"""
-        elif analysis_type == "rag":
-            documents = analysis_data.get("documents") or []
-            query = analysis_data.get("query", "")
-
-            if not documents:
-                logger.warning("RAG 검색 결과가 비어 있습니다.")
-                return (
-                    "## RAG 검색 결과 없음\n\n"
-                    f"질문: {query or '질문 정보 없음'}\n\n"
-                    "검색된 문서가 없어 보고서를 생성할 수 없습니다. "
-                    "질문을 더 구체적으로 작성하거나 다른 키워드로 다시 시도해 주세요."
-                )
-
-            max_docs = 1
-            selected_docs = documents[:max_docs]
-            if len(documents) > max_docs:
-                logger.info(
-                    "RAG 문서 %d개 중 상위 %d개만 사용합니다.",
-                    len(documents),
-                    max_docs
-                )
-
-            documents_block = "\n\n".join(
-                f"[문서 {idx + 1}]\n{doc}"
-                for idx, doc in enumerate(selected_docs)
-            )
-        
-            prompt = f"""당신은 금융 분야 RAG 요약 전문가입니다. 아래 사용자 질문과 검색된 문서 내용을 토대로 간결한 마크다운 보고서를 작성하세요.
-
-                    [사용자 질문]
-                    {query}
-
-                    [검색 문서]
-                    {documents_block}
-
-                    보고서 지침:
-                    1. 사용자 질문과 동일한 언어로 작성하세요.
-                    2. 제목은 '## RAG 기반 금융 요약'으로 시작합니다.
-                    3. '### 주요 인사이트', '### 근거', '### 추가 제안' 세 섹션을 포함하세요.
-                    4. 문서에서 확인된 사실만 사용하고 추측은 금지합니다.
-                    5. 핵심 수치나 인용은 bullet 형태로 명확하게 정리하세요.
-                    """
-        else:
-            logger.error(f"Unknown analysis_type: {analysis_type}")
-            return f"❌ 지원하지 않는 분석 타입입니다: {analysis_type}"
+        llm_manager = get_llm_manager()
 
         try:
+            if analysis_type == "single":
+                # 단일 주식 보고서 생성
+                analysis_json = json.dumps(analysis_data, ensure_ascii=False, indent=2)
+                prompt_template = llm_manager.get_prompt("report_direct_single")
+                prompt = prompt_template.format(analysis_json=analysis_json)
+
+            elif analysis_type == "comparison":
+                # 비교 분석 보고서 생성
+                stocks = analysis_data.get("stocks", [])
+                tickers = [s.get("ticker") for s in stocks]
+                tickers_str = " vs ".join(tickers)
+
+                analysis_json = json.dumps(analysis_data, ensure_ascii=False, indent=2)
+                prompt_template = llm_manager.get_prompt("report_direct_comparison")
+                prompt = prompt_template.format(
+                    analysis_json=analysis_json,
+                    tickers=tickers_str
+                )
+
+            elif analysis_type == "rag":
+                documents = analysis_data.get("documents") or []
+                query = analysis_data.get("query", "")
+
+                if not documents:
+                    logger.warning("RAG 검색 결과가 비어 있습니다.")
+                    return (
+                        "## RAG 검색 결과 없음\n\n"
+                        f"질문: {query or '질문 정보 없음'}\n\n"
+                        "검색된 문서가 없어 보고서를 생성할 수 없습니다. "
+                        "질문을 더 구체적으로 작성하거나 다른 키워드로 다시 시도해 주세요."
+                    )
+
+                max_docs = 1
+                selected_docs = documents[:max_docs]
+                if len(documents) > max_docs:
+                    logger.info(
+                        "RAG 문서 %d개 중 상위 %d개만 사용합니다.",
+                        len(documents),
+                        max_docs
+                    )
+
+                documents_block = "\n\n".join(
+                    f"[문서 {idx + 1}]\n{doc}"
+                    for idx, doc in enumerate(selected_docs)
+                )
+
+                prompt_template = llm_manager.get_prompt("report_direct_rag")
+                prompt = prompt_template.format(
+                    query=query,
+                    documents_block=documents_block
+                )
+
+            elif analysis_type in ["general", "definition", "explanation", "concept"]:
+                # financial_analyst가 일반 금융 용어/개념 설명 반환 시
+                query = analysis_data.get("query", "")
+
+                # 여러 가능한 필드에서 내용 찾기
+                analysis_text = (
+                    analysis_data.get("analysis") or
+                    analysis_data.get("explanation") or
+                    analysis_data.get("description") or
+                    analysis_data.get("answer") or
+                    ""
+                )
+
+                # 필드가 비어있으면 analysis_data 전체를 사용
+                if not analysis_text:
+                    logger.warning(f"{analysis_type} 타입이지만 표준 필드가 비어있음. 전체 데이터를 LLM에 전달")
+
+                    # query, analysis_type 제외하고 나머지 데이터
+                    filtered_data = {k: v for k, v in analysis_data.items()
+                                   if k not in ['query', 'analysis_type'] and v}
+
+                    if filtered_data:
+                        analysis_text = json.dumps(filtered_data, ensure_ascii=False, indent=2)
+                        logger.debug(f"전체 데이터 사용: {analysis_text[:200]}...")
+                    else:
+                        # 정말 데이터가 없으면 질문만이라도 LLM에 전달해서 일반 지식으로 답변하게
+                        logger.warning("모든 데이터가 비어있음. LLM의 일반 지식으로 답변 생성 시도")
+                        analysis_text = "정보 없음 - LLM의 일반 지식으로 답변 필요"
+
+                # LLM이 정보를 정리하거나 일반 지식으로 답변
+                prompt_template = llm_manager.get_prompt("report_direct_concept")
+                prompt = prompt_template.format(
+                    query=query,
+                    analysis_text=analysis_text
+                )
+
+            else:
+                logger.error(f"Unknown analysis_type: {analysis_type}")
+                return f"❌ 지원하지 않는 분석 타입입니다: {analysis_type}"
+
             # LLM 직접 호출 (에이전트 없이)
             response = self.llm.invoke(prompt)
             report_text = response.content.strip()
@@ -450,15 +411,15 @@ An error occurred: {str(e)}
             logger.error(f"직접 보고서 생성 실패: {str(e)}")
             return f"""# 보고서 생성 오류
 
-            보고서 생성 중 오류가 발생했습니다: {str(e)}
+보고서 생성 중 오류가 발생했습니다: {str(e)}
 
-            ## 분석 데이터
-            ```json
-            {json.dumps(analysis_data, ensure_ascii=False, indent=2)}
-            ```
+## 분석 데이터
+```json
+{json.dumps(analysis_data, ensure_ascii=False, indent=2)}
+```
 
-            ⚠️ 다시 시도해주세요.
-            """
+⚠️ 다시 시도해주세요.
+"""
 
 
 if __name__ == "__main__":

@@ -49,14 +49,67 @@ class QualityEvaluator:
         evaluation_prompt = llm_manager.get_prompt("quality_evaluator")
         self.evaluation_chain = evaluation_prompt | self.llm
 
+    def _is_critical_error(self, answer: str) -> bool:
+        """
+        답변에 치명적인 에러가 있는지 판단합니다.
+
+        단순 키워드 매칭이 아닌 컨텍스트를 고려한 스마트 판단:
+        1. 성공 지표가 있으면 비치명적 (부분 성공 인정)
+        2. 치명적 에러 패턴 확인
+        3. 일반 에러 키워드는 성공 지표 없을 때만 치명적
+
+        Args:
+            answer: 평가할 답변 텍스트
+
+        Returns:
+            True면 치명적 에러, False면 정상 또는 부분 성공
+        """
+        answer_lower = answer.lower()
+
+        # 1. 성공 지표 확인 - 하나라도 있으면 부분 성공으로 인정
+        success_indicators = [
+            "✓", "✔", "성공", "완료", "저장되었습니다", "저장됨",
+            "생성되었습니다", "생성 완료", "saved", "completed", "successfully"
+        ]
+        has_success = any(indicator in answer for indicator in success_indicators)
+
+        if has_success:
+            logger.debug("성공 지표 발견 - 부분 성공으로 인정")
+            return False
+
+        # 2. 치명적 에러 패턴 - 완전 실패를 의미하는 메시지
+        critical_patterns = [
+            "분석 데이터를 찾을 수 없습니다",
+            "질문이 비어 있어",
+            "적합한 에이전트를 찾을 수 없습니다",
+            "보고서를 생성하지 못했습니다",
+            "답변을 드릴 수 없습니다",
+            "처리할 수 없습니다",
+            "오류가 발생했습니다",
+            "analysis_data를 찾을 수 없습니다"
+        ]
+
+        for pattern in critical_patterns:
+            if pattern in answer:
+                logger.warning(f"치명적 에러 패턴 감지: {pattern}")
+                return True
+
+        # 3. 일반 에러 키워드 - 성공 지표가 없고 에러만 있는 경우
+        error_keywords = ["error", "failed", "could not", "unable to", "오류", "실패"]
+        if any(keyword in answer_lower for keyword in error_keywords):
+            logger.debug("일반 에러 키워드 발견 (성공 지표 없음)")
+            return True
+
+        return False
+
     def evaluate_answer(self, question: str, answer: str) -> Dict[str, Any]:
         """
         답변의 품질을 평가합니다 (module_plan.md 요구사항 준수).
 
         평가 순서:
         1. Empty 체크 (10자 미만)
-        2. Error 패턴 체크 (키워드 검색)
-        3. LLM-as-a-judge로 품질 평가
+        2. Critical Error 체크 (스마트 에러 감지)
+        3. LLM-as-a-judge로 품질 평가 (최종 판단)
 
         Args:
             question (str): 사용자의 원본 질문.
@@ -81,11 +134,9 @@ class QualityEvaluator:
                 "failure_reason": "empty"
             }
 
-        # 2. Error 패턴 체크
-        error_keywords = ["error", "failed", "could not", "unable to", "오류", "실패", "찾을 수 없"]
-        answer_lower = answer.lower()
-        if any(keyword in answer_lower for keyword in error_keywords):
-            logger.warning(f"품질 평가 실패: 에러 키워드 감지")
+        # 2. Critical Error 체크 - 스마트 에러 감지
+        if self._is_critical_error(answer):
+            logger.warning(f"품질 평가 실패: 치명적 에러 감지")
             return {
                 "status": "fail",
                 "score": 0,
