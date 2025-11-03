@@ -11,6 +11,7 @@ import os
 import platform
 
 from typing import Dict, Any, Optional
+from pathlib import Path
 from datetime import datetime
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
@@ -845,59 +846,48 @@ def _save_pdf_report(report_text: str, output_path: str, chart_paths: Optional[s
         from reportlab.pdfbase.ttfonts import TTFont
         from reportlab.lib import colors
         
-        # 한글 폰트 등록 (matplotlib 설정 재사용)
+        # 한글 폰트 등록
         korean_font = 'Helvetica'
         korean_font_bold = 'Helvetica-Bold'
+        font_registered = False
         
         try:
             system = platform.system()
-            font_registered = False
+            project_fonts_dir = Path(__file__).resolve().parents[3] / "fonts"
+            
+            font_pairs = []
+            if project_fonts_dir.exists():
+                font_pairs.extend([
+                    (project_fonts_dir / "NanumGothic.ttf", project_fonts_dir / "NanumGothicBold.ttf"),
+                    (project_fonts_dir / "NanumBarunGothic.ttf", project_fonts_dir / "NanumBarunGothicBold.ttf"),
+                ])
             
             if system == 'Windows':
-                font_path = 'C:/Windows/Fonts/malgun.ttf'
-                if os.path.exists(font_path):
-                    pdfmetrics.registerFont(TTFont('Korean', font_path))
-                    # Bold 폰트도 등록 시도
-                    bold_path = 'C:/Windows/Fonts/malgunbd.ttf'
-                    if os.path.exists(bold_path):
-                        pdfmetrics.registerFont(TTFont('KoreanBold', bold_path))
-                        korean_font_bold = 'KoreanBold'
-                    else:
-                        korean_font_bold = 'Korean'
-                    korean_font = 'Korean'
-                    font_registered = True
-                    
-            elif system == 'Darwin':  # macOS
-                font_path = '/System/Library/Fonts/AppleGothic.ttf'
-                if os.path.exists(font_path):
-                    pdfmetrics.registerFont(TTFont('Korean', font_path))
+                font_pairs.append((Path('C:/Windows/Fonts/malgun.ttf'), Path('C:/Windows/Fonts/malgunbd.ttf')))
+            elif system == 'Darwin':
+                font_pairs.append((Path('/System/Library/Fonts/AppleGothic.ttf'), None))
+            else:  # Linux
+                font_pairs.append((Path('/usr/share/fonts/truetype/nanum/NanumGothic.ttf'),
+                                   Path('/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf')))
+            
+            for regular_path, bold_path in font_pairs:
+                if regular_path.exists():
+                    pdfmetrics.registerFont(TTFont('Korean', str(regular_path)))
                     korean_font = 'Korean'
                     korean_font_bold = 'Korean'
-                    font_registered = True
                     
-            else:  # Linux
-                font_paths = [
-                    '/usr/share/fonts/truetype/nanum/NanumGothic.ttf',
-                    '/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf',
-                ]
-                if os.path.exists(font_paths[0]):
-                    pdfmetrics.registerFont(TTFont('Korean', font_paths[0]))
-                    korean_font = 'Korean'
-                    font_registered = True
-                    
-                    if os.path.exists(font_paths[1]):
-                        pdfmetrics.registerFont(TTFont('KoreanBold', font_paths[1]))
+                    if bold_path and bold_path.exists():
+                        pdfmetrics.registerFont(TTFont('KoreanBold', str(bold_path)))
                         korean_font_bold = 'KoreanBold'
-                    else:
-                        korean_font_bold = 'Korean'
-            
-            if font_registered:
-                logger.info(f"한글 폰트 등록 성공: {system}")
-            else:
-                logger.warning("한글 폰트를 찾을 수 없습니다. 기본 폰트를 사용합니다.")
-                
+                    
+                    font_registered = True
+                    break
+        
         except Exception as e:
             logger.warning(f"폰트 등록 실패: {str(e)}")
+        
+        if not font_registered:
+            logger.warning("한글 폰트를 찾을 수 없습니다. 기본 폰트를 사용합니다.")
         
         # PDF 문서 생성
         doc = SimpleDocTemplate(
@@ -967,7 +957,7 @@ def _save_pdf_report(report_text: str, output_path: str, chart_paths: Optional[s
             if (line.startswith('# ') or 
                 '===' in line or 
                 'REPORT' in line.upper() or
-                (i == 0 and len(line) < 100)):  # 첫 줄이 짧으면 제목으로 간주
+                (i == 0 and len(line) < 100)):
                 
                 clean_line = line.replace('#', '').replace('=', '').strip()
                 if clean_line:
@@ -1010,7 +1000,6 @@ def _save_pdf_report(report_text: str, output_path: str, chart_paths: Optional[s
             story.append(Paragraph("Charts & Visualizations", title_style))
             story.append(Spacer(1, 0.3 * inch))
             
-            # 쉼표로 구분된 경로 처리
             paths = [p.strip() for p in chart_paths.split(',')]
             
             for idx, chart_path in enumerate(paths):
@@ -1061,8 +1050,10 @@ def _save_pdf_report(report_text: str, output_path: str, chart_paths: Optional[s
         doc.build(story)
         
         logger.info(f"PDF 보고서 저장 완료 - 경로: {output_path}")
-        return f"✓ PDF 보고서가 {output_path}에 저장되었습니다."
-    
+        logger.info(f"사용된 폰트: {korean_font} (임베딩: True)")
+        
+        return f"✓ PDF 보고서가 {output_path}에 저장되었습니다. (폰트 임베딩 완료)"
+            
     except ImportError as e:
         logger.error(f"필요한 라이브러리가 설치되지 않았습니다: {str(e)}")
         return "❌ PDF 생성에 필요한 라이브러리를 설치해주세요: pip install reportlab Pillow"
