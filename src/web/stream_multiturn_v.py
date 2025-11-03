@@ -3,16 +3,17 @@ from dotenv import load_dotenv
 from langchain_upstage import ChatUpstage
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 
+from src.workflow.workflow import build_workflow
 
 @st.cache_resource
 def load_model():
     load_dotenv()
     print("model loaded ...")
-    llm = ChatUpstage(model="solar-pro2", streaming = True)
+    workflow = build_workflow()
     print("model load complete")
-    return llm
+    return workflow
 
-llm = load_model()
+workflow = load_model()
 st.title("financial AI")
 
 # 대화 상태
@@ -29,7 +30,7 @@ def build_messages_with_history(user_prompt: str):
     """streamlit의 chat_history를 LangChain 메시지 객체 배열로 변환"""
     msgs = []
     # (선택) 히스토리 길이 제한
-    history = st.session_state.chat_history[-12:]  # 최근 12 turn만 사용
+    history = st.session_state.chat_history[-12:-1]  # 최근 12 turn만 사용
     for item in history:
         if item["role"] == "user":
             msgs.append(HumanMessage(content=item["message"]))
@@ -53,10 +54,8 @@ if prompt := st.chat_input("메세지를 입력하세요."):
     # 3) 출력 + 히스토리 저장
     with st.chat_message("ai"):
         message_placeholder = st.empty()
-        full_response = ""
         with st.spinner("메세지 입력 중입니다."):
-            # response = st.session_state.chat_session.send_message(prompt, stream = True)
-            for chunk in llm.stream(messages):
-                full_response += chunk.content
-                message_placeholder.markdown(full_response)
-    st.session_state.chat_history.append({"role": "ai", "message": full_response})
+            response = workflow.run(question = prompt, chat_previous= messages)
+            message_placeholder.markdown(response['answer'])
+            # st.write(response['answer'])
+    st.session_state.chat_history.append({"role": "ai", "message": response['answer']})
