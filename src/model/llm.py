@@ -62,6 +62,8 @@ class LLMManager:
     def _initialize_prompts(self):
         """프롬프트 템플릿을 초기화합니다."""
 
+
+
         # Financial Analyst 프롬프트
         self._prompts["financial_analyst"] = PromptTemplate(
             template="""You are a professional financial analyst. Use available tools to analyze stocks and return structured JSON.
@@ -124,6 +126,8 @@ User Query: {input}
 {agent_scratchpad}""",
             input_variables=["input", "tools", "tool_names", "agent_scratchpad"]
         )
+
+
 
         # Report Generator 프롬프트
         self._prompts["report_generator"] = PromptTemplate(
@@ -208,6 +212,8 @@ User Query: {input}
             input_variables=["input", "analysis_data", "tools", "tool_names", "agent_scratchpad"]
         )
 
+
+
         # Request Analyst 프롬프트
         self._prompts["request_analyst"] = PromptTemplate(
             template="""당신은 사용자의 질문 또는 요청이 "경제, 금융 관련"인지 판별하는 분류기 입니다.
@@ -227,6 +233,8 @@ User Query: {input}
 {question}""",
             input_variables=["question"]
         )
+
+
 
         # Supervisor 프롬프트
         self._prompts["supervisor"] = PromptTemplate(
@@ -252,6 +260,8 @@ User Query: {input}
             input_variables=["question"]
         )
 
+
+
         # Quality Evaluator 프롬프트
         self._prompts["quality_evaluator"] = PromptTemplate(
             template="""당신은 답변의 품질을 평가하는 엄격한 평가관입니다.
@@ -274,7 +284,12 @@ User Query: {input}
             input_variables=["question", "answer"]
         )
 
+
+
         logger.info(f"프롬프트 초기화 완료: {list(self._prompts.keys())}")
+
+
+
 
     def get_model(
         self,
@@ -317,6 +332,8 @@ User Query: {input}
         model_config.update(kwargs)
 
         return ChatUpstage(**model_config)
+
+
 
     def get_prompt(self, prompt_name: str) -> PromptTemplate:
         """
