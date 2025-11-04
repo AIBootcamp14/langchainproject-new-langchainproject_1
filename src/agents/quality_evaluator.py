@@ -138,7 +138,7 @@ class QualityEvaluator:
                 scores[criterion] = 0
                 logger.warning(f"{criterion} 점수를 찾을 수 없음")
                 
-        retrun scores
+        return scores
         
     def evaluate_answer(self, question: str, answer: str) -> Dict[str, Any]:
         """
@@ -168,13 +168,13 @@ class QualityEvaluator:
         logger.debug(f"질문: {question[:100]}...")
         logger.debug(f"답변: {answer[:100] if answer else '(empty)'}...")
 
-        # 1. Empty 체크 (10자 미만)
-        if not answer or len(answer.strip()) < 10:
-            logger.warning("품질 평가 실패: 답변이 비어있거나 10자 미만")
+        # 1. Empty 체크 (5자 미만)
+        if not answer or len(answer.strip()) < 5:
+            logger.warning("품질 평가 실패: 답변이 비어있거나 5자 미만")
             return {
                 "status": "fail",
                 "score": 0,
-                "socres": {},
+                "scores": {},
                 "failure_reason": "empty"
             }
 
@@ -244,6 +244,6 @@ class QualityEvaluator:
             return {
                 "status": "fail",
                 "score": 0,
-                "scores": {}
+                "scores": {},
                 "failure_reason": "error"
             }
