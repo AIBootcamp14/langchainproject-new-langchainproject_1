@@ -17,7 +17,9 @@ logger = get_logger(__name__)
 
 class FinanceGate(BaseModel):
     """경제/금융 관련 여부 분류 모델"""
-    label: str = Field(description="경제 금융 관련 여부 label.")
+    label: Literal["finance", "general_conversation", "not_finance"] = Field(
+        description="질문 분류: 'finance' (경제/금융 관련), 'general_conversation' (인사/메타 질문), 'not_finance' (비금융 정보 요청)"
+    )
 
 
 class RewriteResult(BaseModel):
@@ -25,9 +27,15 @@ class RewriteResult(BaseModel):
     rewritten_query: str = Field(description="질문의 의도를 유지하면서 다른 표현으로 재작성된 사용자 질문")
 
 
-def request_analysis(state, llm=None, chat_history: Optional[List[Dict]] = None) -> Literal["finance", "not_finance"]:
+def request_analysis(state, llm=None, chat_history: Optional[List[Dict]] = None) -> Dict[str, Any]:
     """
-    사용자 요청을 분석하여 경제/금융 관련 여부를 판별합니다.
+    사용자 요청을 분석하여 3가지로 분류합니다.
+
+    1) finance (경제/금융 관련)
+    2) general_conversation (인사/메타 질문)
+    3) not_finance (비금융 정보 요청)
+
+    not_finance의 경우 Config.NOT_FINANCE_RESPONSE 안내 메시지를 return_msg에 포함하여 반환합니다.
 
     Args:
         state (dict): 현재 그래프 상태 (question 필드 포함)
@@ -36,6 +44,8 @@ def request_analysis(state, llm=None, chat_history: Optional[List[Dict]] = None)
 
     Returns:
         dict: label과 return_msg 필드를 포함한 딕셔너리
+            - label: "finance", "general_conversation", "not_finance" 중 하나
+            - return_msg: not_finance인 경우 반환할 안내 메시지
     """
     logger.info("=" * 10 + " Request Analysis THINKING START! " + "=" * 10)
     question = state['question']
@@ -67,15 +77,18 @@ def request_analysis(state, llm=None, chat_history: Optional[List[Dict]] = None)
 
     logger.info(f"Question status: {result.label}")
 
-    if result.label == "not_finance":
+    if result.label == "general_conversation":
+        logger.info("일반 대화로 분류됨")
+        return {"label": "general_conversation"}
+    elif result.label == "not_finance":
         logger.info("비금융 질문으로 분류됨")
         return {
             'return_msg': Config.NOT_FINANCE_RESPONSE,
             'label': "not_finance"
         }
-
-    logger.info("금융 질문으로 분류됨")
-    return {"label": "finance"}
+    else:  # finance
+        logger.info("금융 질문으로 분류됨")
+        return {"label": "finance"}
 
 
 def rewrite_query(
