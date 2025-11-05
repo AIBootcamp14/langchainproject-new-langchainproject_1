@@ -81,6 +81,12 @@ CRITICAL FORMATTING RULES:
 4. NEVER write "Observation:" - the system provides it automatically
 5. Use plain text only in Action/Action Input
 
+ACTION LINE HARD RULES:
+- Start of line must be exactly "Action: " (no leading spaces/bullets/numbers).
+- Next line must be exactly "Action Input: " + one-line JSON.
+- Never put these two lines in code fences or bold/italics.
+- Write no other text before/after those two lines in the same turn.
+
 CORRECT FORMAT:
 Thought: I need to search for Apple stock
 Action: search_stocks
@@ -92,7 +98,7 @@ WRONG (DO NOT DO):
 - Writing multiple actions in one response
 - Writing fake Observation
 - Writing Action + Observation together
-- Using ```json in Final Answer
+
 
 WORKFLOW - Choose based on query type:
 
@@ -136,7 +142,7 @@ CORRECT: ..."Buy"}}, {{..."Hold"}}], "comparison_summary"...  <- Note the ] afte
 WRONG: ..."Buy"}}, {{..."Hold"}}, "comparison_summary"...     <- Missing ] causes parsing error
 
 {agent_scratchpad}""",
-            input_variables=["'agent_scratchpad'","tools", "tool_names"]
+            input_variables=["agent_scratchpad","tools", "tool_names"]
         )
 
 
@@ -170,6 +176,12 @@ ABSOLUTE RULES - FOLLOW STRICTLY:
 5. Do NOT write Observation - the system will provide it
 6. Do NOT write multiple Thought/Action pairs in one response
 7. Do NOT write Final Answer until ALL tools are used
+
+ACTION LINE HARD RULES:
+- Start of line must be exactly "Action: " (no leading spaces/bullets/numbers).
+- Next line must be exactly "Action Input: " + one-line JSON.
+- Never put these two lines in code fences or bold/italics.
+- Write no other text before/after those two lines in the same turn.
 
 CORRECT SINGLE ACTION:
 Thought: I need to draw a chart
@@ -266,8 +278,23 @@ Analysis Data: {analysis_data}
 
         # Quality Evaluator 프롬프트
         self._prompts["quality_evaluator"] = PromptTemplate(
-            template="""당신은 답변의 품질을 평가하는 엄격한 평가관입니다.
-사용자의 질문에 대해 에이전트가 생성한 답변이 적절한지, 유용한 정보를 포함하고 있는지, 오류는 없는지 평가해주세요.
+            template="""당신은 답변의 품질을 평가하는 전문가입니다.
+            
+출력 형식은 정확히 아래 4줄만, 각 줄 맨 앞에 항목명과 콜론, 한 칸 공백, 한 자리 숫자(1~5)로 작성합니다.
+추가 설명/마크다운/코드블록/불릿/이모지 금지. 숫자 뒤에는 아무 문자도 붙이지 마세요.
+
+정확성: N
+완전성: N
+관련성: N
+명확성: N
+    
+채점 지침(모델 내부 규칙):
+- 각 항목 범위는 1~5.
+- 명백한 오류/완전한 동문서답/치명적 위험이 아닌 한, 각 항목 최소 3점을 부여한다.
+- 사소한 누락/가벼운 불명확/부분 정답은 3~4점 범위에서 판단한다.
+- 정말로 부적절할 때만 1~2점을 준다. (예: 질문과 무관, 잘못된 사실 단정, 심각한 오류)
+
+-- 
 
 [사용자 질문]
 {question}
@@ -275,14 +302,7 @@ Analysis Data: {analysis_data}
 [에이전트의 답변]
 {answer}
 
-[평가 기준]
-1. 질문의 의도에 맞는 답변인가?
-2. 답변에 '오류', '찾을 수 없음' 등 실패를 의미하는 내용이 포함되어 있지는 않은가?
-3. 답변이 구체적이고 명확한가?
-
-위 기준에 따라 답변의 품질을 1점에서 5점 사이의 점수로만 평가해주세요. 다른 설명은 절대 추가하지 마세요.
-
-평가 점수:""",
+위 답변을 4가지 항목으로 평가해주세요:""",
             input_variables=["question", "answer"]
         )
         
