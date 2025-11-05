@@ -9,6 +9,7 @@ from src.agents.financial_analyst import FinancialAnalyst
 from src.agents.quality_evaluator import QualityEvaluator
 from src.agents.report_generator import ReportGenerator
 from src.agents.request_analyst import request_analysis, rewrite_query
+from src.agents.clean_query import query_cleaner
 from src.agents.supervisor import supervisor
 from src.model.llm import get_llm_manager
 from src.rag.retriever import Retriever
@@ -62,6 +63,7 @@ class Workflow:
     def _build_graph(self):
         graph = StateGraph(WorkflowState)
 
+        graph.add_node('query_clean', self.query_clean_node)
         graph.add_node("request_analyst", self.request_analyst_node)
         graph.add_node("supervisor", self.supervisor_node)
         graph.add_node("financial_analyst", self.financial_analyst_node)
@@ -69,8 +71,8 @@ class Workflow:
         graph.add_node("report_generator", self.report_generator_node)
         graph.add_node("quality_evaluator", self.quality_evaluator_node)
 
-        graph.set_entry_point("request_analyst")
-
+        graph.set_entry_point("query_clean")
+        graph.add_edge("query_clean", "request_analyst")
         graph.add_conditional_edges(
             "request_analyst",
             self._route_from_request_analyst,
@@ -165,7 +167,7 @@ class Workflow:
         logger.info(f"🔍 financial_analyst_node 시작")
 
         try:
-            analysis_data = self.financial_analyst.analyze(query=question, messages=messages)
+            analysis_data = self.financial_analyst.analyze(query=question, messages = [])
             # 중요: 반환값 확인
             logger.info(f"📊 analyze() 반환 타입: {type(analysis_data)}")
             logger.debug(f"📊 analyze() 반환 값: {analysis_data}")
@@ -259,6 +261,16 @@ class Workflow:
             logger.error(f"❌ general_conversation_node LLM 처리 실패: {e}")
             state["answer"] = "죄송합니다. 응답 생성 중 문제가 발생했습니다. 다시 시도해주세요."
             state["route"] = "end"
+
+        return state
+
+    def query_clean_node(self, state: WorkflowState) -> WorkflowState:
+        """Query을 문맥을 읽고 정확한 query로 수정합니다."""
+        question = state.get("question", "")
+        messages = state.get('messages', [])
+        logger.info("="*10 + f"Query Clean node 진입" + "="*10)
+        result = query_cleaner({'question': question, 'messages' : messages})
+        state['question'] = result['rewritten_query']
 
         return state
 

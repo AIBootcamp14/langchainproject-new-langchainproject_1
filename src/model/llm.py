@@ -7,7 +7,7 @@ LLM 모델과 프롬프트를 중앙에서 관리하는 클래스입니다.
 
 from typing import Dict, Optional
 from langchain_upstage import ChatUpstage
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder, PromptTemplate
 from langchain_core.language_models.chat_models import BaseChatModel
 
 from src.utils.config import Config
@@ -480,6 +480,69 @@ Analysis Data: {analysis_data}"""),
 참고 정보:
 {analysis_text}"""),
         ])
+
+        self._prompts["clean_query"] = PromptTemplate(
+            template="""
+You are a professional query refiner and context-aware assistant alignment engine.
+
+Your task is to rewrite the user's latest message into a clear, standalone intent.
+
+### Rules
+- Use conversation history to fully understand the user's intent
+- Fix typos, broken spacing, slang, fragmented messages, Korean smashed keyboard sequences
+  (e.g., "ㄴㅔㅇㅣ버" → "네이버")
+- Convert ambiguous or short replies into explicit intent
+  (e.g., "응", "ㅇㅇ", "그래", "해줘" → context-based full request)
+- Preserve original language (Korean → Korean, English → English)
+- DO NOT add extra interpretation beyond the conversation intent
+- Return ONLY the rewritten query, no explanations
+
+### Special Behavior
+If the assistant previously proposed an action (e.g., generate PDF, draw chart, save file)
+and the latest user reply is an acceptance like:
+"응", "어", "ㅇㅋ", "그래", "좋아", "해줘", "OK", "yes", "sure"
+→ Rewrite to that accepted action explicitly.
+
+### Examples
+
+History:
+H: 네이버를 분석해줘
+A: 네, 분석해드릴게요. 보고서를 PDF로도 만들어드릴까요?
+U: 응
+Rewritten Query:
+네이버 분석 결과를 PDF로 만들어줘
+
+---
+
+History:
+H: ㄴ ㅔ 이버 주ㄱㅏ 알려줘
+A: 네이버 주가 정보를 찾았습니다. 더 자세한 재무분석도 해드릴까요?
+U:ㅇㅇ
+Rewritten Query:
+네이버를 상세 재무 분석해줘
+
+---
+
+History:
+H: 애플 주가좀
+A: 네, 분석했습니다. 차트로 볼까요?
+U:그래
+Rewritten Query:
+애플 주가 차트 보여줘
+
+---
+
+### Your Turn
+
+History:
+{messages}
+
+Latest user message:
+{input}
+
+Rewritten Query:
+
+""", input_variables=["messages", "input"])
 
 
 

@@ -1,9 +1,40 @@
+import re
+
 import streamlit as st
 from dotenv import load_dotenv
 from langchain_upstage import ChatUpstage
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 
 from src.workflow.workflow import build_workflow
+
+
+def remove_markdown(text: str) -> str:
+    # 이미지 Markdown ![alt](url)
+    text = re.sub(r'!\[([^\]]*)\]\([^)]+\)', r'\1', text)
+    # 링크 Markdown [text](url)
+    text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
+    # Bold / Italic
+    text = re.sub(r'(\*\*|__)(.*?)\1', r'\2', text)
+    text = re.sub(r'(\*|_)(.*?)\1', r'\2', text)
+    # Inline code
+    text = re.sub(r'`([^`]*)`', r'\1', text)
+    # Code blocks
+    text = re.sub(r'```[\s\S]*?```', '', text)
+    # Headings (#)
+    text = re.sub(r'^#{1,6}\s*', '', text, flags=re.MULTILINE)
+    # Blockquote >
+    text = re.sub(r'^>\s?', '', text, flags=re.MULTILINE)
+    # Bullet lists - * +
+    text = re.sub(r'^\s*[-*+]\s+', '', text, flags=re.MULTILINE)
+    # Numbered lists 1.
+    text = re.sub(r'^\s*\d+\.\s+', '', text, flags=re.MULTILINE)
+    # Remove extra whitespace
+    text = re.sub(r'\s+', ' ', text).strip()
+
+    return text
+
+
+
 
 @st.cache_resource
 def load_model():
