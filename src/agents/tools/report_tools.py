@@ -22,6 +22,21 @@ from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+# Global variable to store current analysis_data for tools
+_current_analysis_data_json = None
+
+
+def _set_current_analysis_data(data_json: str):
+    """Set the current analysis data for tools to access"""
+    global _current_analysis_data_json
+    _current_analysis_data_json = data_json
+
+
+def _get_current_analysis_data() -> str:
+    """Get the current analysis data JSON string"""
+    global _current_analysis_data_json
+    return _current_analysis_data_json if _current_analysis_data_json else "{}"
+
 # 운영체제별 한글 폰트 설정
 if platform.system() == 'Windows':
     plt.rcParams['font.family'] = 'Malgun Gothic'
@@ -302,7 +317,6 @@ Industry: {metrics.get('industry', 'N/A')}"""
         logger.info(f"정리된 output_path: {output_path}")
 
         # Report Generator에서 설정한 글로벌 변수에서 데이터 가져오기
-        from src.agents.report_generator import _get_current_analysis_data
         financial_data_json = _get_current_analysis_data()
 
         if not financial_data_json or financial_data_json == "{}":
@@ -381,7 +395,6 @@ def draw_valuation_radar(output_path: str = "charts/valuation_radar.png") -> str
             output_path += '.png'  # Default to PNG if no valid extension
 
         # Report Generator에서 설정한 글로벌 변수에서 데이터 가져오기
-        from src.agents.report_generator import _get_current_analysis_data
         financial_data_json = _get_current_analysis_data()
 
         if not financial_data_json or financial_data_json == "{}":

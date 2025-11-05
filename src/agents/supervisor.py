@@ -52,6 +52,7 @@ def supervisor(state: State, llm=None) -> Literal["vector_search_agent", "financ
     """
     logger.info("=" * 10 + " SUPERVISOR THINKING START! " + "=" * 10)
     question = state['question']
+    messages = state.get('messages', [])
     logger.info(f"라우팅할 질문: {question}")
 
     # LLM 가져오기
@@ -60,13 +61,12 @@ def supervisor(state: State, llm=None) -> Literal["vector_search_agent", "financ
         llm = llm_manager.get_model(Config.LLM_MODEL, temperature=Config.LLM_TEMPERATURE)
         logger.info(f"기본 LLM 모델 사용: {Config.LLM_MODEL}")
 
-    # 프롬프트 가져오기
+    # 프롬프트 가져오기 (이미 ChatPromptTemplate으로 변환됨)
     llm_manager = get_llm_manager()
-    supervisor_prompt = llm_manager.get_prompt("supervisor")
-
+    prompt = llm_manager.get_prompt("supervisor")
     # 체인 생성 및 실행
-    chain = supervisor_prompt | llm.with_structured_output(AgentType)
-    result = chain.invoke({"question": question})
+    chain = prompt | llm.with_structured_output(AgentType)
+    result = chain.invoke({"input": question, 'chat_history': messages})
 
     logger.info(f"Choose Agent: {result.agent}")
     return result.agent
