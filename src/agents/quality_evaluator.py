@@ -213,13 +213,6 @@ class QualityEvaluator:
                 
             avg_score = sum(valid_scores) / len(valid_scores)
             logger.info(f"평균 점수: {avg_score:.2f}")
-            
-            # # LLM의 답변에서 첫 번째 1-5 사이의 숫자만 추출
-            # import re
-            # match = re.search(r'[1-5]', response.content)
-            # score = int(match.group()) if match else 0
-            # logger.info(f"추출된 품질 점수: {score}")
-            # logger.debug(f"LLM 원본 응답: {response.content}")
 
             # 기준 점수와 비교하여 통과/실패 결정
             if avg_score >= self.threshold:

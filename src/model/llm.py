@@ -81,6 +81,12 @@ CRITICAL FORMATTING RULES:
 4. NEVER write "Observation:" - the system provides it automatically
 5. Use plain text only in Action/Action Input
 
+ACTION LINE HARD RULES:
+- Start of line must be exactly "Action: " (no leading spaces/bullets/numbers).
+- Next line must be exactly "Action Input: " + one-line JSON.
+- Never put these two lines in code fences or bold/italics.
+- Write no other text before/after those two lines in the same turn.
+
 CORRECT FORMAT:
 Thought: I need to search for Apple stock
 Action: search_stocks
@@ -92,7 +98,7 @@ WRONG (DO NOT DO):
 - Writing multiple actions in one response
 - Writing fake Observation
 - Writing Action + Observation together
-- Using ```json in Final Answer
+
 
 WORKFLOW - Choose based on query type:
 
@@ -170,6 +176,12 @@ ABSOLUTE RULES - FOLLOW STRICTLY:
 5. Do NOT write Observation - the system will provide it
 6. Do NOT write multiple Thought/Action pairs in one response
 7. Do NOT write Final Answer until ALL tools are used
+
+ACTION LINE HARD RULES:
+- Start of line must be exactly "Action: " (no leading spaces/bullets/numbers).
+- Next line must be exactly "Action Input: " + one-line JSON.
+- Never put these two lines in code fences or bold/italics.
+- Write no other text before/after those two lines in the same turn.
 
 CORRECT SINGLE ACTION:
 Thought: I need to draw a chart
