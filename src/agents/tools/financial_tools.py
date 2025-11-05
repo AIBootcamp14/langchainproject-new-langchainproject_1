@@ -382,7 +382,7 @@ def get_stock_info(ticker: str) -> Dict[str, Any]:
 def web_search(query: str) -> str:
     """웹 검색을 수행하여 최신 뉴스, 시장 동향, 기업 정보 등을 조회합니다.
 
-    Tavily API를 사용하여 심층 웹 검색을 수행하고, 검색 결과를 JSON 파일로 저장합니다.
+    Tavily API를 사용하여 심층 웹 검색을 수행합니다.
     yfinance에서 제공하지 않는 최신 뉴스, 시장 분석, 기업 이벤트 등을 찾을 때 유용합니다.
 
     주요 사용 사례:
@@ -401,7 +401,6 @@ def web_search(query: str) -> str:
         검색 결과 요약 (포맷팅된 문자열)
         - 검색된 결과 개수
         - 상위 5개 결과의 제목, URL, 내용 미리보기
-        - 전체 검색 결과가 저장된 JSON 파일 경로 (data/resources_YYYYMMDD_HHMMSS.json)
 
         오류 발생 시: 오류 메시지를 포함한 딕셔너리
 
@@ -410,7 +409,6 @@ def web_search(query: str) -> str:
         '''🌐 'Apple stock surge January 2025' 웹 검색 완료
 
         📊 검색 결과: 5개
-        💾 저장 위치: data/resources_20250131_143022.json
 
         📝 주요 결과:
 
@@ -427,7 +425,6 @@ def web_search(query: str) -> str:
         '''🌐 'semiconductor industry outlook 2025' 웹 검색 완료
 
         📊 검색 결과: 7개
-        💾 저장 위치: data/resources_20250131_143045.json
 
         📝 주요 결과:
 
@@ -466,32 +463,17 @@ def web_search(query: str) -> str:
                     logger.error(f"웹 검색 실패 - query: {query}, error: {str(e)}")
                     result["raw_content"] = result["content"]
 
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-
-        # 저장할 경로 설정
-        project_root = os.path.dirname(current_path)  # src
-        parent_dir = os.path.dirname(project_root)     # 프로젝트 최상위 (src의 상위)
-        data_dir = os.path.join(parent_dir, 'data')
-        os.makedirs(data_dir, exist_ok=True)
-        
-        resources_json_path = os.path.join(data_dir, f'resources_{timestamp}.json')
-
-        # JSON 저장
-        with open(resources_json_path, 'w', encoding='utf-8') as f:
-            json.dump(response, f, ensure_ascii=False, indent=4)
-
-        # 요약
+        # 요약 생성
         output = f"🌐 '{query}' 웹 검색 완료\n\n"
-        output += f"📊 검색 결과: {len(results)}개\n"
-        output += f"💾 저장 위치: {resources_json_path}\n\n"
+        output += f"📊 검색 결과: {len(results)}개\n\n"
         output += "📝 주요 결과:\n"
-        
+
         for idx, result in enumerate(results[:5], 1):
             output += f"\n[{idx}] {result.get('title', 'N/A')}\n"
             output += f"    URL: {result.get('url', 'N/A')}\n"
             output += f"    내용: {result.get('content', 'N/A')[:150]}...\n"
 
-        logger.info(f"웹 검색 완료 - query: {query}, 결과: {len(results)}개, 저장: {resources_json_path}")
+        logger.info(f"웹 검색 완료 - query: {query}, 결과: {len(results)}개")
         return output
 
     except Exception as e:
