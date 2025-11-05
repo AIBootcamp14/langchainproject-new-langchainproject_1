@@ -10,16 +10,13 @@ class Config:
     """환경 변수 및 설정 관리"""
     
     # API Keys
-    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
     UPSTAGE_API_KEY = os.getenv("UPSTAGE_API_KEY")
     TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
-    
+
     # API Key 검증
     @classmethod
     def validate_api_keys(cls):
         """필수 API 키 존재 여부 확인"""
-        if not cls.OPENAI_API_KEY:
-            raise ValueError("OPENAI_API_KEY가 설정되지 않았습니다.")
         if not cls.UPSTAGE_API_KEY:
             raise ValueError("UPSTAGE_API_KEY 설정되지 않았습니다.")
         if not cls.TAVILY_API_KEY:
