@@ -295,6 +295,85 @@ class ChatHistoryDB:
                 "failure_reasons": {}
             }
 
+    def get_all_sessions(self, limit: int = 10) -> List[Dict]:
+        """
+        모든 세션 목록을 최근 순으로 가져옵니다.
+
+        Args:
+            limit: 최대 세션 개수 (기본값: 10)
+
+        Returns:
+            세션 정보 딕셔너리 리스트
+            각 딕셔너리: {
+                "session_id": str,
+                "preview": str (첫 번째 user 메시지 미리보기),
+                "message_count": int,
+                "last_timestamp": str
+            }
+        """
+        try:
+            with self._get_cursor() as cursor:
+                # 각 세션의 첫 번째 user 메시지와 메시지 수 가져오기
+                cursor.execute("""
+                    SELECT
+                        session_id,
+                        COUNT(*) as message_count,
+                        MAX(timestamp) as last_timestamp,
+                        (SELECT content FROM chat_history c2
+                         WHERE c2.session_id = c1.session_id AND c2.role = 'user'
+                         ORDER BY c2.timestamp ASC LIMIT 1) as first_content
+                    FROM chat_history c1
+                    GROUP BY session_id
+                    ORDER BY last_timestamp DESC
+                    LIMIT ?
+                """, (limit,))
+
+                rows = cursor.fetchall()
+
+                sessions = []
+                for row in rows:
+                    session_id, message_count, last_timestamp, first_content = row
+                    # 미리보기 텍스트 자르기 (최대 50자)
+                    preview = first_content if first_content else "(빈 대화)"
+                    preview_short = preview[:50] + "..." if len(preview) > 50 else preview
+
+                    sessions.append({
+                        "session_id": session_id,
+                        "preview": preview_short,
+                        "message_count": message_count,
+                        "last_timestamp": last_timestamp
+                    })
+
+                logger.info(f"{len(sessions)}개의 세션을 조회했습니다.")
+                return sessions
+        except sqlite3.Error as e:
+            logger.error(f"세션 목록 조회 오류: {e}")
+            return []
+
+    def get_turn_count(self, session_id: str) -> int:
+        """
+        세션의 대화 턴 수를 반환합니다.
+        턴 수는 user 메시지 개수로 계산합니다.
+
+        Args:
+            session_id: 세션 고유 ID
+
+        Returns:
+            int: 대화 턴 수 (user 메시지 개수)
+        """
+        try:
+            with self._get_cursor() as cursor:
+                cursor.execute("""
+                    SELECT COUNT(*) FROM chat_history
+                    WHERE session_id = ? AND role = 'user'
+                """, (session_id,))
+                count = cursor.fetchone()[0]
+                logger.debug(f"{session_id} 세션의 턴 수: {count}")
+                return count
+        except sqlite3.Error as e:
+            logger.error(f"턴 수 조회 오류: {e}")
+            return 0
+
     def clear_session(self, session_id: str):
         """
         특정 세션의 기록 삭제.
