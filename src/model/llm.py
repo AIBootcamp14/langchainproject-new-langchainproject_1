@@ -17,7 +17,13 @@ logger = get_logger(__name__)
 
 
 class LLMManager:
-    """LLM 모델과 프롬프트를 중앙에서 관리하는 클래스"""
+    """LLM 모델과 프롬프트를 중앙에서 관리하는 싱글톤 클래스입니다.
+
+    Upstage Solar 모델(solar-pro2, solar-mini)을 초기화하고,
+    금융 에이전트에서 사용하는 모든 프롬프트 템플릿(financial_analyst, report_generator,
+    request_analyst, supervisor, quality_evaluator 등)을 관리합니다.
+    get_model()과 get_prompt()를 통해 필요한 리소스를 제공합니다.
+    """
 
     def __init__(self):
         """LLM Manager 초기화"""
@@ -254,23 +260,200 @@ Analysis Data: {analysis_data}"""),
 
         # Request Analyst 프롬프트
         self._prompts["request_analyst"] = ChatPromptTemplate.from_messages([
-            ("system", """당신은 사용자의 질문 또는 요청이 "경제, 금융 관련"인지 판별하는 분류기 입니다.
+            ("system", """당신은 사용자의 질문을 다음 세 가지 카테고리로 분류하는 전문가입니다.
 
-판단 기준:
-- 경제, 금융 관련(`finance`) 예시 : 주식ETF/채권/파생상품, 환율/금리/인플레이션/거시경제, 기업 실적/밸류에이션(Market Cap, PER/PBR/EV/EBITDA 등), 재무제표/회계, 개인재무(예산/저축/대출/세금), 암호자산의 시세/거래/토큰 이코노미(투자 맥락), 금융/규제/정책/공시/뉴스.
-- 비관련(`not_finance`) 예시 : 날씨/여행/요리/스포츠/게임/일상 대화, 일반 IT/프로그래밍(금융 맥락 없음), 역사/예술/문화, 비재무적 기업 소개(연혁/채용 등만).
+**분류 기준:**
 
-엣지 케이스 처리:
-- 기술/데이터/AI 질문이라도 "투자 의사결정/시장/재무 지표/거시경제"와 직접 연결되면 `finance`.
-- 암호화폐/블록체인 기술 자체는 `not_finance`이지만, 가격/투자/거래/시장 동향을 묻는다면 `finance`.
-- 질문이 모호하면 사용자 의도가 금융일 가능성이 있는지 보수적으로 판단하되, 근거가 부족하면 `not_finance`
+1. **finance** (경제/금융 관련 정보 요청)
+   - 주식, ETF, 채권, 파생상품, 암호화폐 거래/시세
+   - 환율, 금리, 인플레이션, 거시경제 지표
+   - 기업 실적, 재무제표, 밸류에이션 (PER, PBR, EV/EBITDA 등)
+   - 투자, 자산관리, 세금, 대출, 예산 관리
+   - 금융 규제, 정책, 공시, 뉴스
 
-출력은 구조화된 형식으로만 반환하십시오. 추가 설명이나 여분 텍스트를 포함하지 마십시오."""),
+2. **general_conversation** (일반 대화 및 메타 질문)
+   - 인사/감사/작별: "안녕", "안녕하세요", "고마워", "감사합니다", "잘가", "bye"
+   - AI 자신에 대한 질문: "너는 뭐야?", "무엇을 할 수 있어?", "이름이 뭐야?"
+   - 대화 히스토리 메타 질문: "방금 뭐 물어봤지?", "처음 질문이 뭐였지?", "아까 말한 게 뭐야?"
+   - 단순 확인/반응: "알겠어", "오케이", "좋아", "응", "네", "그래"
+   - 감정 표현만: "심심해", "재미있네", "좋은데?"
+
+3. **not_finance** (명확한 비금융 정보 요청)
+   - 날씨, 여행, 요리, 레시피
+   - 일반 IT/프로그래밍 지식 (금융 맥락 없음)
+   - 스포츠, 게임, 엔터테인먼트
+   - 역사, 예술, 문화, 과학
+   - 기업의 비재무적 정보 (연혁, 채용 정보만)
+
+**판단 우선순위:**
+1. 먼저 질문이 정보 요청인지 확인
+   - 정보 요청이 아니면 → `general_conversation`
+   - 정보 요청이면 다음 단계로
+2. 금융/경제 관련 여부 확인
+   - 금융 관련 → `finance`
+   - 비금융 → `not_finance`
+
+**중요: 기업명/금융상품명 포함 시 보수적 분류**
+- "삼성전자는?", "애플은?", "테슬라는?" → 상장 기업명 포함 → `finance`
+- "나스닥이란?", "코스피는?" → 증권거래소명 → `finance`
+- "ETF란?", "채권은?" → 금융상품 → `finance`
+- 질문이 모호하지만 금융 키워드가 있으면 → `finance` (supervisor가 추가 판단)
+
+**엣지 케이스:**
+- "AI가 뭐야?" → 일반 AI 지식 → `not_finance`
+- "금융 AI가 뭐야?" → 본인에 대한 질문 → `general_conversation`
+- "비트코인 기술 설명" → 기술 자체 → `not_finance`
+- "비트코인 가격 전망" → 투자/시세 → `finance`
+- "재미있는 얘기 해줘" → 대화 요청 → `general_conversation`
+- chat_history가 있는 경우, 맥락을 고려하여 판단
+
+**출력 형식:**
+오직 JSON 구조만 반환하십시오. 추가 설명이나 텍스트를 포함하지 마십시오.
+{{"label": "finance" | "general_conversation" | "not_finance"}}"""),
             MessagesPlaceholder('chat_history', optional=True),
             ("human", "{input}"),
         ])
 
 
+
+        # Query Cleaner 프롬프트
+        self._prompts["clean_query"] = ChatPromptTemplate.from_messages([
+            ("system", """You are a professional query refiner and context-aware assistant alignment engine.
+
+Your task is to rewrite the user's latest message into a clear, standalone intent.
+
+### Rules
+
+- Use conversation history to fully understand the user's intent
+- Fix typos, broken spacing, slang, fragmented messages, Korean smashed keyboard sequences
+  (e.g., "ㄴㅔㅇㅣ버" → "네이버")
+- Convert ambiguous or short replies into explicit intent
+  (e.g., "응", "ㅇㅇ", "그래", "해줘" → context-based full request)
+- Preserve original language (Korean → Korean, English → English)
+- DO NOT add extra interpretation beyond the conversation intent
+- Return ONLY the rewritten query, no explanations
+
+### 🚨 CRITICAL: Meta Questions & General Conversations - DO NOT REWRITE
+
+If the user's message is a meta question or general conversation about the AI itself,
+**return it UNCHANGED** regardless of conversation history:
+
+**Meta Questions (Return AS-IS):**
+- "넌 누구야?", "누구세요?", "who are you?", "what are you?"
+- "뭘 할 수 있어?", "무엇을 할 수 있나요?", "what can you do?", "넌 뭘할수있지?"
+- "어떻게 사용해?", "how to use?", "사용법은?"
+- "도움말", "help", "기능", "features"
+
+**General Greetings (Return AS-IS):**
+- "안녕", "안녕하세요", "hi", "hello"
+- "고마워", "감사합니다", "thanks", "thank you"
+- "잘가", "bye", "goodbye"
+
+### Special Behavior (ONLY for short acceptances)
+
+**ONLY** if the assistant previously proposed a SPECIFIC action (e.g., "PDF로 만들어드릴까요?", "차트로 볼까요?")
+**AND** the latest user reply is a SHORT acceptance like:
+"응", "어", "ㅇㅋ", "그래", "좋아", "OK", "yes", "sure" (1-2 words ONLY)
+→ Rewrite to that accepted action explicitly.
+
+**⚠️ If the user message is a full question (3+ words), DO NOT apply this rule!**
+
+### Examples
+
+**Example 1 (Short Acceptance - REWRITE):**
+History:
+- User: 네이버를 분석해줘
+- AI: 네, 분석해드릴게요. 보고서를 PDF로도 만들어드릴까요?
+- User: 응
+Rewritten Query: 네이버 분석 결과를 PDF로 만들어줘
+
+**Example 2 (Short Acceptance - REWRITE):**
+History:
+- User: ㄴ ㅔ 이버 주ㄱㅏ 알려줘
+- AI: 네이버 주가 정보를 찾았습니다. 더 자세한 재무분석도 해드릴까요?
+- User: ㅇㅇ
+Rewritten Query: 네이버를 상세 재무 분석해줘
+
+**Example 3 (Meta Question - KEEP UNCHANGED):**
+History:
+- User: 네이버 주식 분석해줘
+- AI: [분석 결과]
+- User: 넌 누구야?
+Rewritten Query: 넌 누구야?
+
+**Example 4 (Meta Question - KEEP UNCHANGED):**
+History:
+- User: 네이버 주식 분석해줘
+- AI: [분석 결과]
+- User: 넌 뭘할수있지?
+Rewritten Query: 넌 뭘할수있지?
+
+**Example 5 (Incomplete Question - EXPAND):**
+History:
+- User: 애플 주가 알려줘
+- AI: [애플 정보]
+- User: 삼성은 어때?
+Rewritten Query: 삼성 주가 알려줘
+
+**Example 6 (Complete Question - KEEP UNCHANGED):**
+History:
+- User: 카카오 주식 분석해줘
+- AI: [카카오 분석 결과]
+- User: 네이버 주식 차트그려줘
+Rewritten Query: 네이버 주식 차트그려줘
+
+**Example 7 (Complete Question with Action - KEEP UNCHANGED):**
+History:
+- User: 삼성 분석해줘
+- AI: [삼성 분석]
+- User: 현대차 차트 보여줘
+Rewritten Query: 현대차 차트 보여줘
+
+### 🚨 CRITICAL RULE: Complete vs Incomplete Requests
+
+**Complete Request (DO NOT expand with previous context):**
+- Has subject + verb + object: "네이버 주식 차트그려줘", "애플 분석해줘"
+- Standalone understandable without history
+- Only fix typos, DO NOT add previous context
+
+**Incomplete Request (OK to expand):**
+- Missing parts: "네이버는?", "삼성은 어때?", "차트도 보여줘"
+- Requires history to understand
+- Expand using previous context
+
+### 🚨 CRITICAL: Past Tense → Present Action (Combined Action Pattern)
+
+If the user requests a SAVED/EXPORTED result of an analysis that hasn't been done yet (using past tense like "비교한", "분석한"),
+**rewrite to request the analysis FIRST, then the action**:
+
+**Pattern to detect:**
+- "비교한 분석내용을 저장" → "비교하고 저장"
+- "분석한 결과를 PDF로" → "분석하고 PDF로"
+- "조회한 정보를 파일로" → "조회하고 파일로"
+
+**Example 8 (Past Tense Combined Action - REWRITE to Sequential):**
+History: (empty or unrelated)
+User: 애플과 마이크로소프트 주식 비교한 분석내용을 txt파일로 저장해줘
+Rewritten Query: 애플과 마이크로소프트 주식을 비교하고 txt파일로 저장해줘
+
+**Example 9 (Past Tense Combined Action - REWRITE to Sequential):**
+History: (empty or unrelated)
+User: 삼성전자 분석한 결과를 PDF로 만들어줘
+Rewritten Query: 삼성전자를 분석하고 PDF로 만들어줘
+
+**Example 10 (Already Has Analysis - KEEP UNCHANGED):**
+History:
+- User: 애플과 마이크로소프트 비교해줘
+- AI: [비교 분석 결과]
+User: 비교한 분석내용을 txt파일로 저장해줘
+Rewritten Query: 비교 분석 결과를 txt파일로 저장해줘
+
+### Your Turn
+
+Return ONLY the rewritten query in the same language as the input."""),
+            MessagesPlaceholder('chat_history', optional=True),
+            ("human", "{input}"),
+        ])
 
         # Supervisor 프롬프트
         self._prompts["supervisor"] = ChatPromptTemplate.from_messages([
@@ -300,12 +483,41 @@ Analysis Data: {analysis_data}"""),
 
 사용자의 일반적인 대화, 인사, 감사 표현, 메타 질문 등에 자연스럽고 간결하게 응답하세요.
 
-메타 질문 예시:
-- "방금 뭘 물어봤지?" → 이전 대화에서 사용자가 물었던 내용을 인용하여 답변
-- "첫 질문이 뭐였어?" → 대화 초반 내용을 참조하여 답변
+### 대화 히스토리 참조 질문 처리 (CRITICAL!)
 
-응답 원칙:
-- 1-2문장으로 간결하게 답변
+사용자가 이전 대화 내용을 물어볼 때, 시간 표현을 정확히 구분하세요:
+
+**"방금" / "바로 전" / "직전":**
+→ 바로 직전 메시지(1턴 전)를 참조하여 답변
+
+**"아까" / "이전에" / "처음에" / "먼저":**
+→ 전체 대화 히스토리를 검토하여 해당 시점 찾기
+→ "아까" = 여러 턴 전일 수 있음 (2-5턴 이상)
+→ chat_history 전체를 스캔하여 주식 분석 요청, 중요한 질문 등을 찾아 답변
+
+**예시:**
+
+1. "방금 뭘 물어봤지?"
+   → chat_history 마지막 human 메시지 확인
+   → "방금 '넌 뭘할수있지?'라고 물어보셨습니다."
+
+2. "아까 무슨 주식 분석해달라고했지?"
+   → chat_history 전체 스캔
+   → human 메시지 중 주식 관련 요청 찾기
+   → "아까 '네이버 주식 분석해줘'라고 요청하셨습니다."
+
+3. "처음 질문이 뭐였어?"
+   → chat_history 첫 번째 human 메시지 확인
+   → "처음에 '네이버 주식 분석해줘'라고 물어보셨습니다."
+
+### AI 능력 질문 처리
+
+"넌 누구야?", "뭘 할 수 있어?" 같은 질문에는:
+- 금융 AI 어시스턴트 소개
+- 주요 기능 간략히 나열 (주식 분석, 재무 지표, 차트 생성, 보고서 작성 등)
+
+### 응답 원칙:
+- 1-3문장으로 간결하게 답변
 - 필요시 금융 관련 추가 도움을 자연스럽게 제안
 - 친근하지만 전문적인 톤 유지
 - 이모지는 적절하게 사용 (남발 금지)"""),
@@ -481,7 +693,251 @@ Analysis Data: {analysis_data}"""),
 {analysis_text}"""),
         ])
 
+        # Extract Company Names 프롬프트 (financial_analyst용)
+        self._prompts["extract_company_names"] = ChatPromptTemplate.from_messages([
+            ("user", """다음 질문에서 주식 종목 회사명 또는 티커 심볼을 추출하세요.
 
+질문: {query}
+
+규칙:
+- 회사명 또는 티커 심볼 추출 (예: "삼성전자", "애플", "테슬라", "SPY", "QQQ", "AAPL")
+- ETF 티커도 포함 (예: "SPY", "QQQ", "VOO", "IVV", "VTI")
+- 여러 종목이 있으면 모두 추출
+- 각 종목은 새 줄로 구분
+- 종목이 없으면 "NONE" 반환
+- 부가 설명 없이 종목명/티커만 나열
+
+종목:"""),
+        ])
+
+        # Analyze Single Stock 프롬프트 (financial_analyst용)
+        self._prompts["analyze_single_stock"] = ChatPromptTemplate.from_messages([
+            ("user", """당신은 전문 금융 애널리스트입니다.
+
+수집된 데이터를 기반으로 {company_name}({ticker})에 대한 분석을 제공하세요.
+
+사용자 질문: {query}
+
+수집된 데이터:
+- 회사명: {company_name}
+- 티커: {ticker}
+- 현재가: {current_price}
+- 재무 지표: {metrics}
+- 과거 가격 데이터: {historical_info}
+- 웹 검색 결과: {web_search}
+- 애널리스트 추천: {analyst_rec}
+
+분석 요구사항:
+1. analysis_type: "single"
+2. ticker, company_name, current_price: 위 데이터 사용
+3. analysis: **실제로 수집된 데이터만 사용**하여 간결한 분석 제공 (3-7문장)
+4. metrics: 주요 재무 지표
+5. analyst_recommendation: 매수/보류/매도 중 하나
+
+🚨 CRITICAL 규칙:
+
+**1. 플레이스홀더 절대 금지:**
+- ❌ "[분석 데이터에 구체적인 변동성 수치 추가 필요]" 같은 표현 절대 사용 금지!
+- ❌ "[상승/하락/횡보 추세 설명 필요]" 같은 표현 절대 사용 금지!
+- ❌ "[주요 가격대 분석 필요]" 같은 표현 절대 사용 금지!
+- ✅ **실제 수집된 데이터만 사용**하세요. 데이터가 없으면 해당 내용은 **아예 언급하지 마세요**.
+
+**2. 상품 유형별 분석:**
+- **ETF**: 기초 지수, 추종 오차, 자산 규모, 거래량에 집중
+- **개별 주식**: 재무 지표, 기업 펀더멘털, 산업 동향에 집중
+- 획일적인 분석 구조 사용 금지! 상품 특성에 맞게 유연하게 작성하세요.
+
+**3. 데이터 처리:**
+- **과거 가격 데이터가 "수집 완료"로 표시되면 데이터가 있는 것입니다!**
+- **"3개월 주가 데이터는 제공되지 않았습니다" 같은 표현 절대 금지!**
+- **실제로 "없음"으로 표시된 경우에만 "데이터 없음" 또는 생략하세요!**
+
+**4. 내용 작성:**
+- 틀에 박힌 "변동성, 추세, 지지/저항" 구조 사용하지 마세요
+- 실제 수집된 데이터(현재가, P/E, P/B, 시가총액 등)를 활용한 실질적 분석만 작성
+- 사용자 질문에 직접적으로 답변하는 데 집중
+
+**5. 마크다운 포맷팅 (중요!):**
+- ✅ `**$680.31**로` (O) - 볼드 문법을 한 줄에 완성
+- ❌ `**$680.31**\n로` (X) - 볼드 문법 사이에 줄바꿈 금지
+- 숫자, 용어에 볼드 사용 시 반드시 같은 줄에서 닫기 (`**`)
+
+간결하고 명확하게 작성하세요."""),
+        ])
+
+        # Analyze Comparison 프롬프트 (financial_analyst용)
+        self._prompts["analyze_comparison"] = ChatPromptTemplate.from_messages([
+            ("user", """당신은 전문 금융 애널리스트입니다.
+
+다음 종목을 비교 분석하세요.
+
+사용자 질문: {query}
+
+종목 데이터:
+{stocks_summary}
+
+분석 요구사항:
+1. analysis_type: "comparison"
+2. stocks: 각 종목의 핵심 데이터 (ticker, company_name, current_price, metrics)
+3. analysis: 종목 간 비교 분석 (각 종목의 강점/약점, 투자 추천 포함, 5-7문장)
+4. comparison_summary: 전체 비교 요약 (2-3문장)
+
+🚨 CRITICAL 규칙:
+
+**1. 플레이스홀더 절대 금지:**
+- ❌ "[데이터 필요]" 표현 절대 사용 금지!
+- ❌ "[분석 내용 추가 필요]" 같은 표현 절대 사용 금지!
+- ✅ **실제 수집된 데이터만 사용**하세요. 데이터가 없으면 해당 내용은 **아예 언급하지 마세요**.
+
+**2. 데이터 활용:**
+- **current_price가 0이 아니면 반드시 그 값을 사용하세요!**
+- **market_cap이 0이 아니면 반드시 그 값을 사용하세요!**
+- **metrics 데이터가 있으면 반드시 사용하세요!**
+- **metrics에 pe_ratio, pb_ratio 등이 있으면 "데이터 부재"라고 말하지 마세요!**
+- **실제로 값이 None이거나 0인 경우에만 "데이터 없음"으로 표시하거나 생략하세요!**
+
+**3. 마크다운 포맷팅:**
+- ✅ `**234.56달러**로` (O) - 볼드 문법을 한 줄에 완성
+- ❌ `**234.56달러**\n로` (X) - 볼드 문법 사이에 줄바꿈 금지
+- 숫자, 용어에 볼드 사용 시 반드시 같은 줄에서 닫기 (`**`)
+
+**예시:**
+  - current_price가 234.56이면 → "현재가 **234.56달러**로" (O), "현재가 [데이터 필요]" (X)
+  - market_cap이 3000000000000이면 → "시가총액 **$3.0T**" (O), "시가총액 [데이터 필요]" (X)
+  - pb_ratio가 1.8이면 → "PB 비율 **1.8**" (O), "데이터 부재" (X)
+
+간결하고 명확하게 작성하세요."""),
+        ])
+
+        # Analyze Concept 프롬프트 (financial_analyst용)
+        self._prompts["analyze_concept"] = ChatPromptTemplate.from_messages([
+            ("user", """당신은 금융 전문가입니다.
+
+다음 질문에 대해 명확하고 간결하게 답변하세요:
+
+질문: {query}
+
+답변 (3-5문장):"""),
+        ])
+
+        # Plan Report 프롬프트 (report_generator용)
+        self._prompts["plan_report"] = ChatPromptTemplate.from_messages([
+            ("user", """당신은 금융 보고서 생성 전문가입니다.
+
+사용자 요청과 분석 데이터를 기반으로 보고서 생성 계획을 수립하세요.
+
+사용자 요청: {user_request}
+
+분석 데이터 요약:
+{analysis_summary}
+
+계획 수립 가이드라인:
+
+**차트 생성 규칙 (CRITICAL - 매우 엄격하게 적용!):**
+
+1. **needs_stock_chart**: **DEFAULT: False** - 사용자가 명시적으로 차트 관련 단어를 말하지 않으면 **절대 True 안 됨!**
+
+   **✅ True로 설정하는 유일한 경우: 다음 키워드가 명시적으로 포함된 경우만**
+   - "차트", "그래프", "그려", "시각화", "chart", "graph", "plot", "visualize"
+
+   **❌ 다음은 차트가 아니므로 무조건 False:**
+   - "분석" ("분석해줘" → False, 차트 언급 없음)
+   - "보고서" ("보고서 만들어줘" → False, 차트 언급 없음)
+   - "주가" ("주가 알려줘" → False, 차트 언급 없음)
+   - "추이" ("추이 보여줘" → False, 차트 언급 없음)
+
+   **명확한 예시:**
+   - ❌ "삼성전자는?" → False (차트 요청 없음)
+   - ❌ "삼성전자 분석해줘" → False (차트 요청 없음)
+   - ❌ "삼성전자 주가 알려줘" → False (차트 요청 없음)
+   - ❌ "삼성전자 주가 추이" → False (차트 요청 없음!)
+   - ❌ "삼성전자 자세히 분석" → False (차트 요청 없음)
+   - ✅ "삼성전자 차트 그려줘" → True ("차트", "그려" 명시!)
+   - ✅ "삼성전자 그래프 보여줘" → True ("그래프" 명시!)
+   - ✅ "삼성전자 주가를 차트로" → True ("차트" 명시!)
+   - ✅ "주식 분석하고 차트 그려줘" → True ("차트", "그려" 있음!)
+   - ✅ "차트 생성 요청" → True ("차트" 있음!)
+   - ✅ "카카오 차트를 보여줘" → True ("차트" 명시!)
+   - ✅ "애플과 마이크로소프트 차트 비교" → True ("차트" 명시!)
+
+   **🚨 CRITICAL: "분석하고 차트"처럼 다른 작업과 함께여도 "차트" 키워드만 있으면 True! 🚨**
+   **🚨 GOLDEN RULE: "차트" 관련 단어가 하나라도 있으면 True! 없으면 False! 🚨**
+
+2. **needs_valuation_chart**: **DEFAULT: False** - 사용자가 명시적으로 레이더 차트를 요청하지 않으면 **절대 True 안 됨!**
+
+   **✅ True로 설정하는 유일한 경우: 다음 키워드가 명시적으로 포함된 경우만**
+   - "레이더", "밸류에이션", "radar", "valuation", "평가 차트", "종합 차트"
+
+   **❌ 다음은 레이더 차트가 아니므로 무조건 False:**
+   - "차트" ("차트 그려줘" → False, YTD 차트를 의미)
+   - "그래프" ("그래프 보여줘" → False, YTD 그래프를 의미)
+   - "시각화" ("시각화해줘" → False, YTD 차트를 의미)
+
+   **명확한 예시:**
+   - ❌ "삼성전자 차트 그려줘" → False (YTD 차트만 원함, 레이더 차트 아님!)
+   - ❌ "삼성전자 그래프 보여줘" → False (YTD 차트만)
+   - ✅ "삼성전자 레이더 차트도 보여줘" → True ("레이더" 명시!)
+   - ✅ "삼성전자 밸류에이션 차트" → True ("밸류에이션" 명시!)
+   - ❌ "삼성전자 분석해줘" → False (차트 요청 없음)
+   - ❌ "삼성전자와 애플 비교해줘" → False (차트 요청 없음)
+
+   **🚨 GOLDEN RULE: "차트" = YTD 차트만! 레이더는 명시적 요청 시만! 🚨**
+
+**파일 저장 규칙 (CRITICAL - 매우 엄격하게 적용!):**
+
+3. **needs_save**: **DEFAULT: False** - 사용자가 명시적으로 저장 관련 단어를 말하지 않으면 **절대 True 안 됨!**
+
+   **✅ True로 설정하는 유일한 경우: 다음 키워드가 명시적으로 포함된 경우만**
+   - "저장", "파일", "PDF", "MD", "다운로드", "save", "file", "download", "export"
+
+   **❌ 다음은 저장이 아니므로 무조건 False:**
+   - "보고서" ("보고서 만들어줘" → False, 저장 언급 없음)
+   - "분석" ("분석해줘" → False, 저장 언급 없음)
+   - "결과" ("결과 보여줘" → False, 저장 언급 없음)
+   - "만들어줘" ("만들어줘" → False, 저장 언급 없음)
+   - "작성" ("작성해줘" → False, 저장 언급 없음)
+
+   **명확한 예시 (헷갈리지 마세요!):**
+   - ❌ "삼성전자 분석해줘" → False (저장 언급 없음)
+   - ❌ "삼성전자 보고서 만들어줘" → False ("보고서"는 저장이 아님!)
+   - ❌ "삼성전자 분석 결과 보여줘" → False (저장 언급 없음)
+   - ❌ "삼성전자 자세히 분석해줘" → False (저장 언급 없음)
+   - ❌ "삼성전자 재무 분석 작성해줘" → False ("작성"은 저장이 아님!)
+   - ❌ "삼성전자 투자 보고서" → False (저장 언급 없음)
+   - ❌ "삼성전자 상세 분석" → False (저장 언급 없음)
+   - ❌ "삼성전자 분석 문서" → False ("문서"만으로는 저장이 아님!)
+   - ✅ "삼성전자 분석을 PDF로 저장해줘" → True ("저장", "PDF" 명시!)
+   - ✅ "삼성전자 분석 파일로 만들어줘" → True ("파일" 명시!)
+   - ✅ "삼성전자 분석을 다운로드해줘" → True ("다운로드" 명시!)
+   - ✅ "삼성전자 분석 결과를 md 파일로 저장" → True ("저장", "파일" 명시!)
+
+   **🚨 GOLDEN RULE: 의심스러우면 무조건 False! 🚨**
+
+4. **save_format**:
+   - "pdf" 언급 → "pdf"
+   - "markdown", "md" 언급 → "md"
+   - "텍스트", "txt" 언급 → "txt"
+   - needs_save=True인데 형식 명시 없으면 → "pdf"
+   - needs_save=False면 이 필드는 None
+
+**보고서 작성 규칙 (CRITICAL):**
+5. **report_title**: 회사명 또는 비교 대상 포함
+   - 단일: "삼성전자 주식 분석"
+   - 비교: "삼성전자 vs SK하이닉스 비교 분석"
+
+6. **report_text** - 이것이 사용자에게 보여지는 최종 결과물입니다:
+   - **완전한 문장과 단락으로 작성** (제목만 나열 절대 금지!)
+   - 분석 데이터의 **구체적인 수치와 설명** 포함
+   - 마크다운 형식 사용
+
+   **🔴 포맷팅 규칙 (필수!):**
+   - **숫자는 천 단위 콤마 사용**: 70,000원 (○) / 70000원 (✗)
+   - **목표가 범위**: "215,000원 ~ 345,000원" (○) / "(215 345)" (✗)
+   - **볼드 처리**: 중요 용어는 **굵게** 표시 (예: **매수 추천**, **영업이익**, **목표가**)
+   - **리스트는 줄바꿈**: 각 항목은 새 줄에 작성 (1. 2. 3. 한 줄에 나열 금지!)
+
+답변 형식: JSON (ReportPlan 스키마)"""),
+        ])
 
         logger.info(f"프롬프트 초기화 완료: {list(self._prompts.keys())}")
 
@@ -495,7 +951,10 @@ Analysis Data: {analysis_data}"""),
         **kwargs
     ) -> BaseChatModel:
         """
-        지정된 모델을 반환합니다.
+        지정된 모델명과 파라미터로 새로운 ChatUpstage 인스턴스를 생성하여 반환합니다.
+
+        temperature와 추가 kwargs(예: stop sequences)를 지정할 수 있습니다.
+        매번 새 인스턴스를 생성하므로 호출마다 다른 설정을 사용할 수 있습니다.
 
         Args:
             model_name: 모델 이름 (solar-pro2, solar-pro, solar-mini)
@@ -503,10 +962,10 @@ Analysis Data: {analysis_data}"""),
             **kwargs: 추가 파라미터 (예: stop sequences)
 
         Returns:
-            BaseChatModel: LLM 모델 인스턴스
+            BaseChatModel: 새로 생성된 LLM 모델 인스턴스
 
         Raises:
-            ValueError: 이름이 잘못된 모델 이름
+            ValueError: 잘못된 모델 이름
         """
         if model_name not in self._models:
             raise ValueError(
