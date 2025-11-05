@@ -306,6 +306,13 @@ logs/*
 charts/*
 reports/*
 
+# ChromaDB vector store (not tracked in git)
+data/chroma_store/
+*.sqlite3
+*.sqlite3-journal
+*.sqlite3-wal
+*.sqlite3-shm
+
 # other files
 uv.lock
 
