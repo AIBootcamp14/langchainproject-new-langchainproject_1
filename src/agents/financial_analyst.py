@@ -48,6 +48,7 @@ class AnalysisResult(BaseModel):
     metrics: Optional[Dict[str, Any]] = None
     period: Optional[str] = None
     analyst_recommendation: Optional[str] = None
+    historical: Optional[str] = None  # 과거 가격 데이터 (차트 생성용)
 
     # Comparison fields
     stocks: Optional[List[Dict[str, Any]]] = None
@@ -74,8 +75,8 @@ class FinancialAnalyst:
         logger.info(f"Financial Analyst 초기화 (Structured Output) - model: {model_name}, temp: {temperature}")
 
         # LLM Manager에서 모델 가져오기
-        llm_manager = get_llm_manager()
-        self.llm = llm_manager.get_model(model_name, temperature=temperature)
+        self.llm_manager = get_llm_manager()
+        self.llm = self.llm_manager.get_model(model_name, temperature=temperature)
 
         logger.info("Financial Analyst 초기화 완료")
 
@@ -148,29 +149,20 @@ class FinancialAnalyst:
 
     def _extract_company_names(self, query: str) -> List[str]:
         """
-        질문에서 회사명을 추출합니다 (여러 개 가능).
+        질문에서 회사명 또는 티커 심볼을 추출합니다 (여러 개 가능).
 
         Args:
             query: 사용자 질문
 
         Returns:
-            회사명 리스트 (없으면 빈 리스트)
+            회사명/티커 리스트 (없으면 빈 리스트)
         """
         try:
-            prompt = f"""다음 질문에서 주식 종목 회사명을 추출하세요.
+            # llm.py의 "extract_company_names" 프롬프트 사용
+            prompt = self.llm_manager.get_prompt("extract_company_names")
+            formatted_prompt = prompt.format_messages(query=query)
 
-질문: {query}
-
-규칙:
-- 회사명만 추출 (예: "삼성전자", "애플", "테슬라")
-- 여러 회사가 있으면 모두 추출
-- 각 회사명은 새 줄로 구분
-- 회사명이 없으면 "NONE" 반환
-- 부가 설명 없이 회사명만 나열
-
-회사명:"""
-
-            response = self.llm.invoke(prompt)
+            response = self.llm.invoke(formatted_prompt)
             content = response.content.strip()
 
             if content == "NONE" or not content:
@@ -180,13 +172,14 @@ class FinancialAnalyst:
             companies = [line.strip() for line in content.split('\n') if line.strip()]
             # 숫자 제거 (1. 삼성전자 → 삼성전자)
             companies = [c.lstrip('0123456789.-) ').strip() for c in companies]
-            companies = [c for c in companies if c and c != "NONE"]
+            # 헤더 라인 제거 ("회사명:", "종목:", "Company:", 등)
+            companies = [c for c in companies if c and c != "NONE" and not c.endswith(':') and '회사명' not in c and '종목' not in c and 'company' not in c.lower()]
 
-            logger.info(f"✅ 회사명 추출: '{query}' → {companies}")
+            logger.info(f"✅ 종목/티커 추출: '{query}' → {companies}")
             return companies
 
         except Exception as e:
-            logger.error(f"회사명 추출 실패: {e}")
+            logger.error(f"종목/티커 추출 실패: {e}")
             return []
 
     def _extract_tickers(self, query: str) -> List[str]:
@@ -200,13 +193,13 @@ class FinancialAnalyst:
             티커 리스트 (없으면 빈 리스트)
         """
         try:
-            # Step 1: 질문에서 회사명 추출
+            # Step 1: 질문에서 회사명/티커 추출
             company_names = self._extract_company_names(query)
             if not company_names:
-                logger.warning("회사명을 추출할 수 없음")
+                logger.warning("종목명/티커를 추출할 수 없음")
                 return []
 
-            # Step 2: 각 회사명으로 티커 검색
+            # Step 2: 각 종목명/티커로 티커 검색
             tickers = []
             for company_name in company_names:
                 logger.info(f"티커 검색 중: {company_name}")
@@ -222,8 +215,12 @@ class FinancialAnalyst:
                 match = re.search(r'•\s*([A-Z0-9.]+)\s*-', result)
                 if match:
                     ticker = match.group(1)
-                    logger.info(f"✅ 티커 추출 성공: {ticker}")
-                    tickers.append(ticker)
+                    # 중복 체크
+                    if ticker not in tickers:
+                        logger.info(f"✅ 티커 추출 성공: {ticker}")
+                        tickers.append(ticker)
+                    else:
+                        logger.info(f"⚠️  {ticker}는 이미 추출된 티커 (중복 제거)")
                 else:
                     logger.warning(f"티커 파싱 실패 - result: {result[:200]}")
 
@@ -263,6 +260,43 @@ class FinancialAnalyst:
                 historical = get_historical_prices.invoke({"ticker": ticker, "period": "3mo", "interval": "1d"})
                 collected_data["historical"] = historical
                 logger.info(f"✅ 과거 데이터 수집 완료")
+
+                # 52주 최고가/최저가가 없으면 과거 데이터에서 계산
+                stock_info = collected_data.get("stock_info", {})
+                if (stock_info.get("52week_high", 0) == 0 or stock_info.get("52week_low", 0) == 0) and historical:
+                    try:
+                        # historical 데이터 파싱 (CSV 형식 또는 딕셔너리)
+                        import pandas as pd
+                        if isinstance(historical, str):
+                            from io import StringIO
+                            # 첫 줄은 메타데이터, 그 다음부터 CSV
+                            lines = historical.strip().split('\n')
+                            if len(lines) > 1:
+                                csv_data = '\n'.join(lines[1:])
+                                df = pd.read_csv(StringIO(csv_data))
+                            else:
+                                df = pd.DataFrame()
+                        elif isinstance(historical, dict):
+                            df = pd.DataFrame(historical)
+                        else:
+                            df = historical
+
+                        if not df.empty and 'High' in df.columns and 'Low' in df.columns:
+                            high_52w = df['High'].max()
+                            low_52w = df['Low'].min()
+
+                            # stock_info 업데이트
+                            if stock_info.get("52week_high", 0) == 0:
+                                stock_info["52week_high"] = high_52w
+                                logger.info(f"✅ 52주 최고가 계산: {high_52w:.2f}")
+
+                            if stock_info.get("52week_low", 0) == 0:
+                                stock_info["52week_low"] = low_52w
+                                logger.info(f"✅ 52주 최저가 계산: {low_52w:.2f}")
+
+                            collected_data["stock_info"] = stock_info
+                    except Exception as calc_err:
+                        logger.warning(f"⚠️ 52주 데이터 계산 실패: {calc_err}")
             except Exception as e:
                 logger.warning(f"⚠️ 과거 데이터 수집 실패: {e}")
                 collected_data["historical"] = ""
@@ -321,11 +355,28 @@ class FinancialAnalyst:
 
                 if stock_data:
                     stock_info = stock_data.get("stock_info", {})
+
+                    # metrics를 stock_info 전체 데이터로 구성 (중복 제거)
+                    metrics = {
+                        "pe_ratio": stock_info.get("pe_ratio"),
+                        "forward_pe": stock_info.get("forward_pe"),
+                        "pb_ratio": stock_info.get("pb_ratio"),
+                        "market_cap": stock_info.get("market_cap", 0),
+                        "dividend_yield": stock_info.get("dividend_yield", 0),
+                        "52week_high": stock_info.get("52week_high", 0),
+                        "52week_low": stock_info.get("52week_low", 0),
+                        "volume": stock_info.get("volume", 0),
+                        "avg_volume": stock_info.get("avg_volume", 0),
+                        "sector": stock_info.get("sector", "N/A"),
+                        "industry": stock_info.get("industry", "N/A")
+                    }
+
                     stocks_data.append({
                         "ticker": ticker,
                         "company_name": stock_info.get("name", "Unknown"),
                         "current_price": stock_info.get("current_price", 0),
-                        "metrics": stock_info.get("metrics", {}),
+                        "metrics": metrics,
+                        "historical": stock_data.get("historical", ""),  # 차트 생성용
                         "data": stock_data  # 전체 데이터 보관
                     })
                     logger.info(f"✅ {ticker} 데이터 수집 완료")
@@ -387,30 +438,23 @@ class FinancialAnalyst:
             # Structured Output 설정
             llm_with_structure = self.llm.with_structured_output(AnalysisResult)
 
-            # 프롬프트 구성
-            analysis_prompt = f"""당신은 전문 금융 애널리스트입니다.
-
-다음 {len(stocks_data)}개 종목을 비교 분석하세요.
-
-사용자 질문: {query}
-
-종목 데이터:
-{json.dumps(stocks_summary, ensure_ascii=False, indent=2)}
-
-분석 요구사항:
-1. analysis_type: "comparison"
-2. stocks: 각 종목의 핵심 데이터 (ticker, company_name, current_price, metrics)
-3. analysis: 종목 간 비교 분석 (각 종목의 강점/약점, 투자 추천 포함, 5-7문장)
-4. comparison_summary: 전체 비교 요약 (2-3문장)
-
-CRITICAL: 간결하고 명확하게 작성하세요.
-"""
+            # llm.py의 "analyze_comparison" 프롬프트 사용
+            prompt = self.llm_manager.get_prompt("analyze_comparison")
+            formatted_prompt = prompt.format_messages(
+                query=query,
+                stocks_summary=json.dumps(stocks_summary, ensure_ascii=False, indent=2)
+            )
 
             # Structured Output으로 분석 생성
-            result = llm_with_structure.invoke(analysis_prompt)
+            result = llm_with_structure.invoke(formatted_prompt)
 
             # Pydantic 모델을 딕셔너리로 변환
-            return result.model_dump()
+            result_dict = result.model_dump()
+
+            # stocks를 historical 포함된 stocks_data로 교체
+            result_dict["stocks"] = stocks_data
+
+            return result_dict
 
         except Exception as e:
             logger.error(f"비교 분석 생성 실패: {e}")
@@ -418,7 +462,7 @@ CRITICAL: 간결하고 명확하게 작성하세요.
             # 폴백: 기본 구조로 반환
             return {
                 "analysis_type": "comparison",
-                "stocks": stocks_summary,
+                "stocks": stocks_data,  # historical 포함된 stocks_data 사용
                 "analysis": f"{len(stocks_data)}개 종목의 데이터를 수집했으나 비교 분석 생성에 실패했습니다.",
                 "comparison_summary": "분석 생성 실패"
             }
@@ -447,54 +491,88 @@ CRITICAL: 간결하고 명확하게 작성하세요.
             # 데이터 요약
             ticker = stock_data.get("ticker", "UNKNOWN")
             stock_info = stock_data.get("stock_info", {})
-            company_name = stock_info.get("company_name", "Unknown")
+            company_name = stock_info.get("name", stock_info.get("company_name", "Unknown"))
             current_price = stock_info.get("current_price", 0)
-            metrics = stock_info.get("metrics", {})
 
-            # 프롬프트 구성
-            analysis_prompt = f"""당신은 전문 금융 애널리스트입니다.
+            # metrics를 stock_info에서 직접 구성 (중복 제거)
+            metrics = {
+                "pe_ratio": stock_info.get("pe_ratio"),
+                "forward_pe": stock_info.get("forward_pe"),
+                "pb_ratio": stock_info.get("pb_ratio"),
+                "market_cap": stock_info.get("market_cap", 0),
+                "dividend_yield": stock_info.get("dividend_yield", 0),
+                "52week_high": stock_info.get("52week_high", 0),
+                "52week_low": stock_info.get("52week_low", 0),
+                "volume": stock_info.get("volume", 0),
+                "avg_volume": stock_info.get("avg_volume", 0),
+                "sector": stock_info.get("sector", "N/A"),
+                "industry": stock_info.get("industry", "N/A")
+            }
 
-수집된 데이터를 기반으로 {company_name}({ticker}) 주식에 대한 분석을 제공하세요.
+            # historical 데이터 정보 추출
+            historical_info = "없음"
+            historical_data = stock_data.get('historical', '')
+            if historical_data and len(historical_data.strip()) > 0:
+                # 첫 줄에서 메타데이터 추출 (예: "005930.KS 과거 가격 (3mo, 1d 간격) - 총 60개 데이터 포인트")
+                first_line = historical_data.strip().split('\n')[0]
+                historical_info = f"수집 완료 ({first_line})"
 
-사용자 질문: {query}
-
-수집된 데이터:
-- 회사명: {company_name}
-- 티커: {ticker}
-- 현재가: {current_price}
-- 재무 지표: {json.dumps(metrics, ensure_ascii=False)[:500]}
-- 과거 데이터: {str(stock_data.get('historical', ''))[:300]}
-- 웹 검색 결과: {str(stock_data.get('web_search', ''))[:500]}
-- 애널리스트 추천: {str(stock_data.get('analyst_rec', ''))[:300]}
-
-분석 요구사항:
-1. analysis_type: "single"
-2. ticker, company_name, current_price: 위 데이터 사용
-3. analysis: 종합적인 분석 의견 (3-5문장, 핵심 포인트 중심)
-4. metrics: 주요 재무 지표
-5. analyst_recommendation: 매수/보류/매도 중 하나
-
-CRITICAL: 간결하고 명확하게 작성하세요.
-"""
+            # llm.py의 "analyze_single_stock" 프롬프트 사용
+            prompt = self.llm_manager.get_prompt("analyze_single_stock")
+            formatted_prompt = prompt.format_messages(
+                company_name=company_name,
+                ticker=ticker,
+                query=query,
+                current_price=current_price,
+                metrics=json.dumps(metrics, ensure_ascii=False)[:500],
+                historical_info=historical_info,
+                web_search=str(stock_data.get('web_search', ''))[:500],
+                analyst_rec=str(stock_data.get('analyst_rec', ''))[:300]
+            )
 
             # Structured Output으로 분석 생성
-            result = llm_with_structure.invoke(analysis_prompt)
+            result = llm_with_structure.invoke(formatted_prompt)
 
             # Pydantic 모델을 딕셔너리로 변환
-            return result.model_dump()
+            result_dict = result.model_dump()
+
+            # historical 데이터 추가 (차트 생성용)
+            result_dict["historical"] = stock_data.get("historical", "")
+
+            # metrics를 실제 수집된 데이터로 덮어쓰기 (LLM이 잘못 생성한 경우 방지)
+            result_dict["metrics"] = metrics
+
+            return result_dict
 
         except Exception as e:
             logger.error(f"분석 생성 실패: {e}")
 
             # 폴백: 기본 구조로 반환
             stock_info = stock_data.get("stock_info", {})
+
+            # metrics 구성 (stock_info는 평탄한 구조)
+            fallback_metrics = {
+                "pe_ratio": stock_info.get("pe_ratio"),
+                "forward_pe": stock_info.get("forward_pe"),
+                "pb_ratio": stock_info.get("pb_ratio"),
+                "market_cap": stock_info.get("market_cap", 0),
+                "dividend_yield": stock_info.get("dividend_yield", 0),
+                "52week_high": stock_info.get("52week_high", 0),
+                "52week_low": stock_info.get("52week_low", 0),
+                "volume": stock_info.get("volume", 0),
+                "avg_volume": stock_info.get("avg_volume", 0),
+                "sector": stock_info.get("sector", "N/A"),
+                "industry": stock_info.get("industry", "N/A")
+            }
+
             return {
                 "analysis_type": "single",
                 "ticker": stock_data.get("ticker", "UNKNOWN"),
                 "company_name": stock_info.get("company_name", "Unknown"),
                 "current_price": stock_info.get("current_price", 0),
                 "analysis": f"{stock_info.get('company_name', 'Unknown')} 주식에 대한 분석 데이터를 수집했습니다.",
-                "metrics": stock_info.get("metrics", {}),
+                "metrics": fallback_metrics,
+                "historical": stock_data.get("historical", ""),
                 "period": "3mo",
                 "analyst_recommendation": "N/A"
             }
@@ -512,16 +590,11 @@ CRITICAL: 간결하고 명확하게 작성하세요.
         try:
             logger.info(f"개념 질문 처리: {query}")
 
-            # LLM에게 직접 답변 요청
-            concept_prompt = f"""당신은 금융 전문가입니다.
+            # llm.py의 "analyze_concept" 프롬프트 사용
+            prompt = self.llm_manager.get_prompt("analyze_concept")
+            formatted_prompt = prompt.format_messages(query=query)
 
-다음 질문에 대해 명확하고 간결하게 답변하세요:
-
-질문: {query}
-
-답변 (3-5문장):"""
-
-            response = self.llm.invoke(concept_prompt)
+            response = self.llm.invoke(formatted_prompt)
             explanation = response.content.strip()
 
             return {
