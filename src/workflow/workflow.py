@@ -36,9 +36,12 @@ class WorkflowState(TypedDict, total=False):
     quality_detail: Dict[str, object]  # quality_evaluator 의 평가 결과 디테일
     retries : int  # 루프 재시도 횟수
     previous_failure_reason: str  # 이전 실패 이유 (연속 실패 감지용)
-    consecutive_same_failures: int  # 동일 실패 연속 횟수 
+    consecutive_same_failures: int  # 동일 실패 연속 횟수
     messages : Annotated[list, add_messages]
     agent_scratchpad : Annotated[list, add_messages]
+    # 현재 응답에서 생성된 파일 (streamlit 표시용)
+    current_charts: List[str]
+    current_saved_file: str
     
 
 
@@ -62,6 +65,7 @@ class Workflow:
         graph.add_node("request_analyst", self.request_analyst_node)
         graph.add_node("supervisor", self.supervisor_node)
         graph.add_node("financial_analyst", self.financial_analyst_node)
+        graph.add_node("general_conversation", self.general_conversation_node)
         graph.add_node("report_generator", self.report_generator_node)
         graph.add_node("quality_evaluator", self.quality_evaluator_node)
 
@@ -73,6 +77,7 @@ class Workflow:
             {
                 "end": END,
                 "supervisor": "supervisor",
+                "report_generator": "report_generator",
             },
         )
 
@@ -82,11 +87,13 @@ class Workflow:
             {
                 "financial_analyst": "financial_analyst",
                 "report_generator": "report_generator",
+                "general_conversation": "general_conversation",
                 "end": END,
             },
         )
 
         graph.add_edge("financial_analyst", "report_generator")
+        graph.add_edge("general_conversation", END)  # 일반 대화는 바로 종료
         graph.add_edge("report_generator", "quality_evaluator")
 
         graph.add_conditional_edges(
@@ -111,6 +118,18 @@ class Workflow:
             state["route"] = "end"
             return state
 
+        # 후속 질문 감지 (PDF 저장, 차트 생성 등)
+        has_previous_analysis = state.get("analysis_data") is not None
+        follow_up_keywords = ["그래프", "차트", "저장", "그려", "다운로드", "파일", "pdf", "md", "markdown", "보고서"]
+        is_follow_up = any(keyword in question.lower() for keyword in follow_up_keywords)
+
+        if has_previous_analysis and is_follow_up:
+            logger.info(f"📊 후속 질문 감지 (request_analyst 우회) - 이전 분석 데이터로 바로 report_generator 호출")
+            state["route"] = "report_generator"
+            state["request_type"] = "financial_analyst"
+            return state
+
+        # 일반적인 금융 질문 분석
         analysis_result = request_analysis(state, llm=self.shared_llm)
         label = analysis_result.get("label")
         if label == "finance":
@@ -123,6 +142,7 @@ class Workflow:
 
     def supervisor_node(self, state: WorkflowState) -> WorkflowState:
         """슈퍼바이저 에이전트를 호출해 다음 노드를 결정합니다."""
+        # 일반적인 라우팅
         agent_choice = supervisor(
             state,
             llm=self.shared_llm,
@@ -133,9 +153,9 @@ class Workflow:
         elif agent_choice == "vector_search_agent":
             state["route"] = "report_generator"
             state["request_type"] = "rag"
-        else:
-            state["answer"] = "적합한 에이전트를 찾을 수 없습니다. 그래프를 종료합니다."
-            state["route"] = "end"
+        else:  # "none" - 일반 대화, 인사, 메타 질문 등
+            logger.info("💬 일반 대화로 라우팅 (general_conversation)")
+            state["route"] = "general_conversation"
         return state
 
     def financial_analyst_node(self, state: WorkflowState) -> WorkflowState:
@@ -165,6 +185,79 @@ class Workflow:
         except Exception as e:
             logger.error(f"❌ financial_analyst_node 실행 중 오류: {e}", exc_info=True)
             state["answer"] = f"주식 분석 중 오류가 발생했습니다: {str(e)}"
+            state["route"] = "end"
+
+        return state
+
+    def general_conversation_node(self, state: WorkflowState) -> WorkflowState:
+        """일반 대화, 인사, 감사, 메타 질문을 처리합니다."""
+        question = state.get("question", "").strip()
+        question_lower = question.lower()
+        messages = state.get("messages", [])
+
+        logger.info(f"💬 general_conversation_node 시작 - question: {question}")
+
+        # 1단계: 규칙 기반 패턴 매칭 (빠른 응답, LLM 비용 절감)
+        greetings = ["안녕", "하이", "hi", "hello", "헬로"]
+        thanks = ["고마", "감사", "thanks", "thank you", "땡큐"]
+        goodbyes = ["잘가", "안녕히", "bye", "goodbye", "바이"]
+
+        if any(g in question_lower for g in greetings):
+            state["answer"] = "안녕하세요! 금융 관련 궁금한 점이 있으시면 언제든 물어보세요. 📊"
+            state["route"] = "end"
+            logger.info("💬 규칙 기반 응답: 인사")
+            return state
+
+        if any(t in question_lower for t in thanks):
+            state["answer"] = "도움이 되었다니 기쁩니다! 다른 궁금한 점이 있으시면 말씀해주세요. 😊"
+            state["route"] = "end"
+            logger.info("💬 규칙 기반 응답: 감사")
+            return state
+
+        if any(gb in question_lower for gb in goodbyes):
+            state["answer"] = "좋은 하루 되세요! 언제든 다시 찾아주세요. 👋"
+            state["route"] = "end"
+            logger.info("💬 규칙 기반 응답: 작별")
+            return state
+
+        # 2단계: 메타 질문 처리 (대화 히스토리 참조)
+        from langchain_core.messages import HumanMessage, AIMessage
+        meta_patterns = ["방금", "아까", "전에", "처음", "첫", "이전"]
+
+        if any(mp in question_lower for mp in meta_patterns):
+            # messages에서 HumanMessage만 추출
+            user_messages = [msg for msg in messages if isinstance(msg, HumanMessage)]
+
+            if len(user_messages) >= 1:  # 이전 메시지가 있으면
+                prev_question = user_messages[-1].content  # 가장 최근 사용자 질문
+                state["answer"] = f'방금 물어보신 질문은 "{prev_question}" 입니다.'
+                state["route"] = "end"
+                logger.info(f"💬 메타 질문 처리: 이전 질문 인용 - {prev_question[:50]}")
+                return state
+            else:
+                state["answer"] = "이전 질문이 없습니다. 지금 처음 대화를 시작하신 것 같네요!"
+                state["route"] = "end"
+                logger.info("💬 메타 질문 처리: 이전 질문 없음")
+                return state
+
+        # 3단계: LLM 기반 일반 대화 (복잡한 경우)
+        try:
+            logger.info("💬 LLM 기반 일반 대화 처리 시작")
+            llm_manager = get_llm_manager()
+            llm = llm_manager.get_model("solar-mini", temperature=0.7)
+            prompt = llm_manager.get_prompt("general_conversation")
+
+            # 프롬프트 체인 실행 (MessagesPlaceholder가 자동으로 처리)
+            chain = prompt | llm
+            response = chain.invoke({"input": question, "chat_history": messages})
+
+            state["answer"] = response.content.strip()
+            state["route"] = "end"
+            logger.info(f"💬 LLM 응답 생성 완료 - 길이: {len(state['answer'])}자")
+
+        except Exception as e:
+            logger.error(f"❌ general_conversation_node LLM 처리 실패: {e}")
+            state["answer"] = "죄송합니다. 응답 생성 중 문제가 발생했습니다. 다시 시도해주세요."
             state["route"] = "end"
 
         return state
@@ -250,6 +343,30 @@ class Workflow:
 
             state["answer"] = report.get("report", "보고서를 생성하지 못했습니다.")
             logger.info(f"✅ 보고서 생성 완료 (길이: {len(state['answer'])})")
+
+            # 현재 응답에서 생성된 차트/파일 저장
+            if report.get("charts"):
+                state["current_charts"] = report["charts"]
+                logger.info(f"📊 현재 응답 차트 저장: {report['charts']}")
+            else:
+                state["current_charts"] = []  # 차트 생성 안 했으면 빈 리스트
+
+            if report.get("saved_path"):
+                state["current_saved_file"] = report["saved_path"]
+                logger.info(f"💾 현재 응답 파일 저장: {report['saved_path']}")
+            else:
+                state["current_saved_file"] = None
+
+            # analysis_data는 다음 후속 질문을 위한 참조용으로 유지
+            if report.get("charts") or report.get("saved_path"):
+                if "analysis_data" not in state:
+                    state["analysis_data"] = {}
+
+                if report.get("charts"):
+                    state["analysis_data"]["chart_paths"] = report["charts"]
+
+                if report.get("saved_path"):
+                    state["analysis_data"]["saved_file_path"] = report["saved_path"]
 
         except Exception as e:
             logger.error(f"❌ 보고서 생성 중 오류: {e}", exc_info=True)
@@ -349,10 +466,23 @@ class Workflow:
     # ------------------------------------------------------------------ #
     # Edge routing helpers
     # ------------------------------------------------------------------ #
-    def _route_from_request_analyst(self, state: WorkflowState) -> Literal["end", "supervisor"]:
-        return "end" if state.get("route") == "end" else "supervisor"
+    def _route_from_request_analyst(self, state: WorkflowState) -> Literal["end", "supervisor", "report_generator"]:
+        """
+        request_analyst에서 다음 노드로 라우팅합니다.
+        - 후속 질문(차트/PDF 요청) → report_generator로 직행
+        - 금융 질문 → supervisor
+        - 비금융 질문 → end
+        """
+        route = state.get("route", "supervisor")
+        if route == "report_generator":
+            logger.info("🎯 request_analyst → report_generator 직행 (후속 질문)")
+            return "report_generator"
+        elif route == "end":
+            return "end"
+        else:
+            return "supervisor"
 
-    def _route_from_supervisor(self, state: WorkflowState) -> Literal["financial_analyst", "report_generator", "end"]:
+    def _route_from_supervisor(self, state: WorkflowState) -> Literal["financial_analyst", "report_generator", "general_conversation", "end"]:
         return state.get("route", "financial_analyst")
 
     def _route_from_quality_evaluator(self, state: WorkflowState) -> Literal["retry", "end"]:
@@ -367,7 +497,13 @@ class Workflow:
     # ------------------------------------------------------------------ #
     # Public API
     # ------------------------------------------------------------------ #
-    def run(self, question: str, chat_previous:list) -> WorkflowState:
+    def run(
+        self,
+        question: str,
+        previous_messages: list = None,
+        previous_analysis_data: dict = None,
+        session_id: str = None
+    ) -> WorkflowState:
         """사용자 질문에 따른 그래프를 실행한 뒤 최종 상태를 반환합니다."""
         # 질문 시작 구분선
         logger.info("=" * 80)
@@ -384,9 +520,13 @@ class Workflow:
             "rag_search_results": [],
             "consecutive_same_failures": 0,  # 연속 실패 카운터 초기화
             "previous_failure_reason": "",  # 이전 실패 이유 초기화
-            "messages" : chat_previous,
-            "agent_scratchpad": []
+            "messages": previous_messages if previous_messages is not None else []
         }
+
+        # 이전 분석 데이터가 있으면 state에 추가 (후속 질문 감지용)
+        if previous_analysis_data is not None:
+            initial_state["analysis_data"] = previous_analysis_data
+            logger.info(f"✅ 이전 분석 데이터 로드 완료 - type: {previous_analysis_data.get('analysis_type', 'N/A')}")
 
         result = self.graph.invoke(initial_state)
 
