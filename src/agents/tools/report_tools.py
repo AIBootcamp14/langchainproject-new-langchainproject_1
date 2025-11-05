@@ -58,244 +58,245 @@ plt.rcParams['axes.unicode_minus'] = False
 
 
 @tool
-def draw_stock_chart(output_path: str = "charts/stock_chart.png") -> str:
-    """주식 분석 데이터를 기반으로 가격 차트를 생성하고 저장합니다.
+def draw_stock_chart(
+    output_path: str = "charts/stock_chart.png",
+    analysis_data_json: str = None
+) -> str:
+    """주식 분석 데이터를 기반으로 YTD(Year-to-Date) 가격 차트를 생성하고 저장합니다.
 
     이 도구는 financial_analyst가 분석한 주식 데이터를 시각화합니다.
-    단일 주식 분석의 경우 52주 고가/저가/현재가 막대 그래프와 주요 지표를 표시하고,
-    비교 분석의 경우 여러 주식의 현재가, 52주 범위 위치, P/E Ratio, 시가총액을 비교합니다.
-
-    ⚠️ 중요: Report Generator가 analysis_data를 미리 설정해야 합니다.
-    이 도구는 글로벌 변수에서 분석 데이터를 자동으로 가져옵니다.
+    단일 주식 분석의 경우 YTD 주가 라인 차트와 주요 지표를 표시하고,
+    비교 분석의 경우 각 주식별로 YTD 라인 차트를 subplot으로 나누어 표시합니다.
 
     Args:
         output_path: 차트 이미지를 저장할 경로 (기본값: "charts/stock_chart.png")
                     지원 형식: .png, .jpg, .jpeg, .pdf, .svg, .webp
+        analysis_data_json: 분석 데이터 JSON 문자열 (선택사항, 없으면 글로벌 변수 사용)
 
     Returns:
         차트 저장 결과 메시지 (성공 시 "✓ 차트가 {경로}에 저장되었습니다.", 실패 시 오류 메시지)
 
     Examples:
         >>> draw_stock_chart("charts/aapl_analysis.png")
-        "✓ 차트가 charts/aapl_analysis.png에 저장되었습니다."
+        "✓ YTD 차트가 charts/aapl_analysis.png에 저장되었습니다."
 
         >>> draw_stock_chart("charts/comparison_chart.png")
-        "✓ 비교 차트가 charts/comparison_chart.png에 저장되었습니다."
+        "✓ 비교 YTD 차트가 charts/comparison_chart.png에 저장되었습니다."
     """
     def _draw_single_stock_chart(data: Dict[str, Any], save_path: str) -> str:
-        """단일 주식 메트릭 시각화 (52주 고가/저가, 현재가를 막대 그래프로 표시)"""
+        """단일 주식 YTD 라인 차트 시각화"""
         try:
             ticker = data.get('ticker', 'N/A')
             company_name = data.get('company_name', 'Unknown')
             current_price = data.get('current_price', 0)
             metrics = data.get('metrics', {})
+            historical = data.get('historical', '')
 
-            high_52w = metrics.get('52week_high', 0)
-            low_52w = metrics.get('52week_low', 0)
-            pe_ratio = metrics.get('pe_ratio', 0)
-            market_cap = metrics.get('market_cap', 0)
+            # historical 데이터 파싱
+            if not historical or len(historical.strip()) == 0:
+                return f"❌ {ticker}: YTD 차트를 그리기 위한 과거 가격 데이터가 없습니다."
 
-            # 52주 데이터 유효성 검사
-            if high_52w == 0 or low_52w == 0:
-                logger.warning(f"{ticker}: 52주 고가/저가 데이터가 없습니다.")
-                if current_price > 0:
-                    high_52w = current_price if high_52w == 0 else high_52w
-                    low_52w = current_price if low_52w == 0 else low_52w
+            import pandas as pd
+            from io import StringIO
+
+            # historical 문자열 파싱 (CSV 형식)
+            try:
+                # 첫 줄은 메타데이터, 그 다음부터 CSV
+                lines = historical.strip().split('\n')
+                if len(lines) < 2:
+                    return f"❌ {ticker}: 과거 가격 데이터가 부족합니다"
+
+                # 메타데이터를 제외하고 CSV 파싱
+                csv_data = '\n'.join(lines[1:])
+                df = pd.read_csv(StringIO(csv_data))
+
+                # 첫 번째 컬럼이 Date/Datetime
+                if df.empty:
+                    return f"❌ {ticker}: 과거 가격 데이터 파싱 실패"
+
+                # 날짜 컬럼 파싱 (첫 번째 컬럼 또는 'Date' 컬럼)
+                date_col = df.columns[0]
+                df[date_col] = pd.to_datetime(df[date_col], utc=True)
+                df = df.sort_values(date_col)
+
+                # Close 컬럼 확인
+                if 'Close' not in df.columns:
+                    return f"❌ {ticker}: Close 컬럼이 없습니다"
+
+                # 차트 생성
+                fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+
+                # 1. YTD 라인 차트
+                ax1.plot(df[date_col], df['Close'], color='#1f77b4', linewidth=2, label='Close Price')
+                ax1.fill_between(df[date_col], df['Close'], alpha=0.3, color='#1f77b4')
+
+                ax1.set_title(f'{company_name} ({ticker}) - YTD Price Chart', fontsize=14, fontweight='bold')
+                ax1.set_xlabel('Date', fontsize=12)
+                ax1.set_ylabel('Price ($)', fontsize=12)
+                ax1.grid(True, alpha=0.3)
+                ax1.legend()
+
+                # 날짜 포맷 조정
+                import matplotlib.dates as mdates
+                ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+                ax1.xaxis.set_major_locator(mdates.AutoDateLocator())
+                plt.setp(ax1.xaxis.get_majorticklabels(), rotation=45, ha='right')
+
+                # 2. 주요 지표 표시
+                ax2.axis('off')
+
+                # Market Cap 포맷팅
+                market_cap = metrics.get('market_cap', 0)
+                if market_cap >= 1e12:
+                    market_cap_str = f"${market_cap/1e12:.2f}T"
+                elif market_cap >= 1e9:
+                    market_cap_str = f"${market_cap/1e9:.2f}B"
+                elif market_cap >= 1e6:
+                    market_cap_str = f"${market_cap/1e6:.2f}M"
                 else:
-                    return f"❌ {ticker}: 가격 데이터가 충분하지 않습니다."
+                    market_cap_str = f"${market_cap:.0f}"
 
-            # 차트 생성
-            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+                # P/E Ratio 포맷팅
+                pe_ratio = metrics.get('pe_ratio')
+                pe_ratio_str = f"{pe_ratio:.2f}" if pe_ratio and pe_ratio > 0 else "N/A"
 
-            # 1. 가격 범위 차트
-            categories = ['52W Low', 'Current', '52W High']
-            prices = [low_52w, current_price, high_52w]
-            colors = ['#d62728', '#2ca02c', '#1f77b4']
+                # PB Ratio 포맷팅
+                pb_ratio = metrics.get('pb_ratio')
+                pb_ratio_str = f"{pb_ratio:.2f}" if pb_ratio and pb_ratio > 0 else "N/A"
 
-            bars = ax1.bar(categories, prices, color=colors, alpha=0.7, edgecolor='black', linewidth=1.5)
-            ax1.set_title(f'{company_name} ({ticker}) - Price Range', fontsize=14, fontweight='bold')
-            ax1.set_ylabel('Price ($)', fontsize=12)
-            ax1.grid(axis='y', alpha=0.3)
-
-            # 가격 레이블
-            for bar, price in zip(bars, prices):
-                height = bar.get_height()
-                ax1.text(bar.get_x() + bar.get_width()/2., height,
-                        f'${price:.2f}',
-                        ha='center', va='bottom', fontweight='bold', fontsize=10)
-
-            # 현재가 위치 표시 (퍼센트) - 차트 하단으로 이동
-            if high_52w > low_52w:
-                position_pct = (current_price - low_52w) / (high_52w - low_52w) * 100
-                ax1.text(0.5, -0.15, f'Position: {position_pct:.1f}% of 52W range',
-                        transform=ax1.transAxes, ha='center', va='top',
-                        fontsize=10, bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.8))
-
-            # 2. 주요 지표 표시
-            ax2.axis('off')
-
-            # Market Cap 포맷팅
-            if market_cap >= 1e12:
-                market_cap_str = f"${market_cap/1e12:.2f}T"
-            elif market_cap >= 1e9:
-                market_cap_str = f"${market_cap/1e9:.2f}B"
-            elif market_cap >= 1e6:
-                market_cap_str = f"${market_cap/1e6:.2f}M"
-            else:
-                market_cap_str = f"${market_cap:.0f}"
-
-            # P/E Ratio 포맷팅
-            pe_ratio_str = f"{pe_ratio:.2f}" if pe_ratio > 0 else "N/A"
-
-            metrics_text = f"""Ticker: {ticker}
+                metrics_text = f"""Ticker: {ticker}
 Company: {company_name}
 
 Current Price: ${current_price:.2f}
-52 Week High: ${high_52w:.2f}
-52 Week Low: ${low_52w:.2f}
+52 Week High: ${metrics.get('52week_high', 0):.2f}
+52 Week Low: ${metrics.get('52week_low', 0):.2f}
 
 P/E Ratio: {pe_ratio_str}
+P/B Ratio: {pb_ratio_str}
 Market Cap: {market_cap_str}
 
 Sector: {metrics.get('sector', 'N/A')}
 Industry: {metrics.get('industry', 'N/A')}"""
 
-            ax2.text(0.1, 0.5, metrics_text, fontsize=11, verticalalignment='center',
-                    family='monospace', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.3))
+                ax2.text(0.1, 0.5, metrics_text, fontsize=11, verticalalignment='center',
+                        family='monospace', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.3))
 
-            plt.tight_layout()
-            plt.savefig(save_path, dpi=300, bbox_inches='tight')
-            plt.close()
+                plt.tight_layout()
+                plt.savefig(save_path, dpi=300, bbox_inches='tight')
+                plt.close()
 
-            return f"✓ 차트가 {save_path}에 저장되었습니다."
+                return f"✓ YTD 차트가 {save_path}에 저장되었습니다."
+
+            except Exception as parse_err:
+                logger.error(f"과거 데이터 파싱 실패: {parse_err}")
+                return f"❌ {ticker}: 과거 데이터 파싱 실패 - {str(parse_err)}"
 
         except Exception as e:
             logger.error(f"단일 주식 차트 생성 실패: {str(e)}")
+            import traceback
+            logger.debug(f"상세 에러:\n{traceback.format_exc()}")
             return f"차트 생성 중 오류: {str(e)}"
 
     def _draw_comparison_chart(data: Dict[str, Any], save_path: str) -> str:
-        """비교 분석 차트 그리기 (여러 주식의 현재가, 52주 범위, 주요 지표 비교)"""
+        """비교 분석 차트 그리기 (각 주식별 YTD 라인 차트)"""
         try:
             stocks = data.get('stocks', [])
             if not stocks:
                 return "비교할 주식 데이터가 없습니다."
 
-            # 3개의 서브플롯: 현재가, 52주 범위, 주요 지표
-            fig = plt.figure(figsize=(18, 5))
-            gs = fig.add_gridspec(1, 3, hspace=0.3, wspace=0.3)
-            ax1 = fig.add_subplot(gs[0, 0])
-            ax2 = fig.add_subplot(gs[0, 1])
-            ax3 = fig.add_subplot(gs[0, 2])
+            import pandas as pd
+            from io import StringIO
+            import matplotlib.dates as mdates
 
-            tickers = [s['ticker'] for s in stocks]
+            num_stocks = len(stocks)
             colors_list = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
 
-            # 1. 현재가 비교
-            prices = [s.get('current_price', 0) for s in stocks]
+            # 각 주식별로 YTD 차트를 그리기 위한 subplot 생성
+            # 2열로 배치 (주식이 많으면 여러 행)
+            ncols = 2
+            nrows = (num_stocks + 1) // 2  # 올림 처리
 
-            bars = ax1.bar(tickers, prices,
-                          color=[colors_list[i % len(colors_list)] for i in range(len(tickers))],
-                          alpha=0.7, edgecolor='black', linewidth=1.5)
-            ax1.set_title('Current Price Comparison', fontsize=14, fontweight='bold')
-            ax1.set_xlabel('Stock', fontsize=12)
-            ax1.set_ylabel('Price ($)', fontsize=12)
-            ax1.grid(axis='y', alpha=0.3)
+            fig, axes = plt.subplots(nrows, ncols, figsize=(14, 5 * nrows))
 
-            # 가격 레이블
-            for bar, price in zip(bars, prices):
-                height = bar.get_height()
-                ax1.text(bar.get_x() + bar.get_width()/2., height,
-                        f'${price:.2f}',
-                        ha='center', va='bottom', fontweight='bold', fontsize=9)
+            # axes를 1차원 배열로 변환 (subplot이 1개일 때 처리)
+            if num_stocks == 1:
+                axes = [axes]
+            else:
+                axes = axes.flatten() if nrows > 1 else axes
 
-            # 2. 52주 범위 비교 (정규화된 차트)
+            # 각 주식별로 YTD 차트 그리기
             for idx, stock in enumerate(stocks):
-                ticker = stock['ticker']
+                ticker = stock.get('ticker', 'N/A')
+                company_name = stock.get('company_name', 'Unknown')
                 current_price = stock.get('current_price', 0)
                 metrics = stock.get('metrics', {})
-                high_52w = metrics.get('52week_high', 0)
-                low_52w = metrics.get('52week_low', 0)
+                historical = stock.get('historical', '')
 
-                # 데이터 유효성 검사
-                if high_52w > 0 and low_52w > 0 and high_52w > low_52w and current_price > 0:
-                    position = (current_price - low_52w) / (high_52w - low_52w) * 100
+                ax = axes[idx]
+                color = colors_list[idx % len(colors_list)]
 
-                    # 정규화된 막대 (0-100%)
-                    ax2.barh(ticker, position,
-                            color=colors_list[idx % len(colors_list)],
-                            alpha=0.7, height=0.6)
+                # historical 데이터 파싱
+                if not historical or len(historical.strip()) == 0:
+                    ax.text(0.5, 0.5, f'{ticker}: YTD 차트 데이터 없음',
+                           ha='center', va='center', fontsize=12, color='red')
+                    ax.set_title(f'{company_name} ({ticker})', fontsize=12, fontweight='bold')
+                    ax.axis('off')
+                    continue
 
-                    # 위치 표시
-                    ax2.text(position, idx, f'{position:.1f}%',
-                            ha='left', va='center', fontsize=9, fontweight='bold')
+                try:
+                    # CSV 파싱 (첫 줄은 메타데이터)
+                    lines = historical.strip().split('\n')
+                    if len(lines) < 2:
+                        ax.text(0.5, 0.5, f'{ticker}: 데이터 부족',
+                               ha='center', va='center', fontsize=12, color='orange')
+                        ax.set_title(f'{company_name} ({ticker})', fontsize=12, fontweight='bold')
+                        ax.axis('off')
+                        continue
 
-            ax2.set_title('Position in 52-Week Range', fontsize=14, fontweight='bold')
-            ax2.set_xlabel('Position (%)', fontsize=12)
-            ax2.set_xlim(0, 100)
-            ax2.grid(axis='x', alpha=0.3)
-            ax2.axvline(x=50, color='red', linestyle='--', alpha=0.5, linewidth=1)
+                    csv_data = '\n'.join(lines[1:])
+                    df = pd.read_csv(StringIO(csv_data))
 
-            # 3. 주요 지표 비교 (P/E Ratio & Market Cap)
-            # None 처리를 명시적으로 수행
-            pe_ratios = []
-            market_caps = []
-            for s in stocks:
-                metrics = s.get('metrics', {})
-                pe = metrics.get('pe_ratio')
-                cap = metrics.get('market_cap')
+                    # 날짜 컬럼 파싱
+                    date_col = df.columns[0]
+                    df[date_col] = pd.to_datetime(df[date_col], utc=True)
+                    df = df.sort_values(date_col)
 
-                # None을 0으로 변환
-                pe_ratios.append(pe if pe is not None else 0)
-                market_caps.append((cap if cap is not None else 0) / 1e12)
+                    # YTD 라인 차트 그리기
+                    ax.plot(df[date_col], df['Close'], color=color, linewidth=2, label='Close Price')
+                    ax.fill_between(df[date_col], df['Close'], alpha=0.3, color=color)
 
-            x = np.arange(len(tickers))
-            width = 0.35
+                    # 제목 및 레이블
+                    ax.set_title(f'{company_name} ({ticker}) - YTD', fontsize=12, fontweight='bold')
+                    ax.set_xlabel('Date', fontsize=10)
+                    ax.set_ylabel('Price ($)', fontsize=10)
+                    ax.grid(True, alpha=0.3)
 
-            ax3_twin = ax3.twinx()
+                    # 현재가 표시
+                    ax.text(0.02, 0.98, f'Current: ${current_price:.2f}',
+                           transform=ax.transAxes, fontsize=10, fontweight='bold',
+                           verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
 
-            bars1 = ax3.bar(x - width/2, pe_ratios, width, label='P/E Ratio',
-                           color='#1f77b4', alpha=0.7, edgecolor='black', linewidth=1.5)
-            bars2 = ax3_twin.bar(x + width/2, market_caps, width, label='Market Cap ($T)',
-                                color='#ff7f0e', alpha=0.7, edgecolor='black', linewidth=1.5)
+                    # 날짜 포맷 조정
+                    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+                    ax.xaxis.set_major_locator(mdates.AutoDateLocator())
+                    plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right')
 
-            # 값 레이블 - None 체크 추가
-            for bar, pe in zip(bars1, pe_ratios):
-                height = bar.get_height()
-                if height is not None:
-                    x_pos = bar.get_x()
-                    width_val = bar.get_width()
-                    if x_pos is not None and width_val is not None:
-                        ax3.text(x_pos + width_val/2., height,
-                                f'{pe:.1f}',
-                                ha='center', va='bottom', fontsize=8)
+                except Exception as parse_err:
+                    logger.warning(f"{ticker} 차트 파싱 실패: {parse_err}")
+                    ax.text(0.5, 0.5, f'{ticker}: 차트 파싱 실패',
+                           ha='center', va='center', fontsize=12, color='orange')
+                    ax.set_title(f'{company_name} ({ticker})', fontsize=12, fontweight='bold')
+                    ax.axis('off')
 
-            for bar, cap in zip(bars2, market_caps):
-                height = bar.get_height()
-                if height is not None:
-                    x_pos = bar.get_x()
-                    width_val = bar.get_width()
-                    if x_pos is not None and width_val is not None:
-                        ax3_twin.text(x_pos + width_val/2., height,
-                                     f'{cap:.2f}T',
-                                     ha='center', va='bottom', fontsize=8)
-
-            ax3.set_title('Key Metrics Comparison', fontsize=14, fontweight='bold')
-            ax3.set_xlabel('Stock', fontsize=12)
-            ax3.set_ylabel('P/E Ratio', fontsize=12, color='#1f77b4')
-            ax3_twin.set_ylabel('Market Cap ($T)', fontsize=12, color='#ff7f0e')
-            ax3.set_xticks(x)
-            ax3.set_xticklabels(tickers)
-            ax3.tick_params(axis='y', labelcolor='#1f77b4')
-            ax3_twin.tick_params(axis='y', labelcolor='#ff7f0e')
-            ax3.legend(loc='upper left', fontsize=9)
-            ax3_twin.legend(loc='upper right', fontsize=9)
-            ax3.grid(True, alpha=0.3, axis='y')
+            # 남은 빈 subplot 숨기기
+            for idx in range(num_stocks, len(axes)):
+                axes[idx].axis('off')
 
             plt.tight_layout()
             plt.savefig(save_path, dpi=300, bbox_inches='tight')
             plt.close()
 
-            return f"✓ 비교 차트가 {save_path}에 저장되었습니다."
+            return f"✓ 비교 YTD 차트가 {save_path}에 저장되었습니다."
 
         except Exception as e:
             logger.error(f"비교 차트 생성 실패: {str(e)}")
@@ -316,8 +317,13 @@ Industry: {metrics.get('industry', 'N/A')}"""
 
         logger.info(f"정리된 output_path: {output_path}")
 
-        # Report Generator에서 설정한 글로벌 변수에서 데이터 가져오기
-        financial_data_json = _get_current_analysis_data()
+        # 파라미터로 전달된 데이터 우선, 없으면 글로벌 변수 사용
+        if analysis_data_json:
+            financial_data_json = analysis_data_json
+            logger.info("📊 파라미터로 전달된 analysis_data 사용")
+        else:
+            financial_data_json = _get_current_analysis_data()
+            logger.info("📊 글로벌 변수에서 analysis_data 가져오기")
 
         if not financial_data_json or financial_data_json == "{}":
             return "❌ 분석 데이터를 찾을 수 없습니다. Report Generator가 데이터를 설정하지 않았습니다."
@@ -345,7 +351,10 @@ Industry: {metrics.get('industry', 'N/A')}"""
 
 
 @tool
-def draw_valuation_radar(output_path: str = "charts/valuation_radar.png") -> str:
+def draw_valuation_radar(
+    output_path: str = "charts/valuation_radar.png",
+    analysis_data_json: str = None
+) -> str:
     """주식의 밸류에이션 지표를 레이더 차트로 시각화합니다.
 
     이 도구는 주식의 5가지 핵심 지표(성장성, 가치, 모멘텀, 품질, 시장심리)를
@@ -354,12 +363,10 @@ def draw_valuation_radar(output_path: str = "charts/valuation_radar.png") -> str
     단일 주식 분석 시에는 업계 기준 대비 절대적 평가를 하고,
     비교 분석 시에는 여러 주식의 상대적 강점을 비교합니다.
 
-    ⚠️ 중요: Report Generator가 analysis_data를 미리 설정해야 합니다.
-    이 도구는 글로벌 변수에서 분석 데이터를 자동으로 가져옵니다.
-
     Args:
         output_path: 레이더 차트 이미지를 저장할 경로 (기본값: "charts/valuation_radar.png")
                     지원 형식: .png, .jpg, .jpeg, .pdf, .svg, .webp
+        analysis_data_json: 분석 데이터 JSON 문자열 (선택사항, 없으면 글로벌 변수 사용)
 
     Returns:
         차트 저장 결과 메시지 (성공 시 "✓ 레이더 차트가 {경로}에 저장되었습니다.", 실패 시 오류 메시지)
@@ -394,8 +401,13 @@ def draw_valuation_radar(output_path: str = "charts/valuation_radar.png") -> str
         if not output_path.endswith(('.png', '.jpg', '.jpeg', '.pdf', '.svg', '.webp')):
             output_path += '.png'  # Default to PNG if no valid extension
 
-        # Report Generator에서 설정한 글로벌 변수에서 데이터 가져오기
-        financial_data_json = _get_current_analysis_data()
+        # 파라미터로 전달된 데이터 우선, 없으면 글로벌 변수 사용
+        if analysis_data_json:
+            financial_data_json = analysis_data_json
+            logger.info("📊 파라미터로 전달된 analysis_data 사용 (레이더 차트)")
+        else:
+            financial_data_json = _get_current_analysis_data()
+            logger.info("📊 글로벌 변수에서 analysis_data 가져오기 (레이더 차트)")
 
         if not financial_data_json or financial_data_json == "{}":
             return "❌ 분석 데이터를 찾을 수 없습니다. Report Generator가 데이터를 설정하지 않았습니다."
