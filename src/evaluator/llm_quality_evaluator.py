@@ -1,4 +1,4 @@
-# src/agents/quality_evaluator.py
+# src/evaluator/llm_quality_evaluator.py
 """
 Quality Evaluator Module
 
@@ -20,7 +20,14 @@ logger = get_logger(__name__)
 
 class QualityEvaluator:
     """
-    답변의 품질을 평가하는 클래스.
+    LLM-as-a-judge 패턴을 사용하여 답변의 품질을 평가하는 클래스입니다.
+
+    3단계 평가 프로세스를 거칩니다:
+    1) Empty 체크 (10자 미만)
+    2) Critical Error 체크 (스마트 에러 감지)
+    3) LLM 기반 품질 점수 평가 (1-5점)
+
+    설정된 threshold 이상이면 통과(pass), 미만이면 실패(fail)로 판정합니다.
     """
 
     def __init__(self, llm: BaseChatModel = None, threshold: int = None):
