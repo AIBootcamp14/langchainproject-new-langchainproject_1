@@ -313,6 +313,9 @@ data/chroma_store/
 *.sqlite3-wal
 *.sqlite3-shm
 
+# Chat history database
+*.db
+
 # other files
 uv.lock
 
