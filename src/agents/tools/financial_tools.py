@@ -46,6 +46,68 @@ def translate_to_english(text: str) -> str:
         return text
 
 
+# 한국 주요 기업 티커 매핑 (번역 오류 방지)
+KOREAN_STOCK_TICKERS = {
+    # 메이저 기업
+    "삼성전자": "005930.KS",
+    "삼성": "005930.KS",
+    "네이버": "035420.KS",
+    "카카오": "035720.KS",
+    "카카오뱅크": "323410.KS",
+    "카카오페이": "377300.KS",
+    "엔씨소프트": "036570.KS",
+    "엔씨": "036570.KS",
+    "현대차": "005380.KS",
+    "현대자동차": "005380.KS",
+    "기아": "000270.KS",
+    "sk하이닉스": "000660.KS",
+    "하이닉스": "000660.KS",
+    "lg전자": "066570.KS",
+    "lg화학": "051910.KS",
+    "lg에너지솔루션": "373220.KS",
+    "포스코": "005490.KS",
+    "셀트리온": "068270.KS",
+    "삼성바이오로직스": "207940.KS",
+    "삼성바이오": "207940.KS",
+    "삼성sdi": "006400.KS",
+    "sk이노베이션": "096770.KS",
+    "sk": "034730.KS",
+    "sk텔레콤": "017670.KS",
+    "kt": "030200.KS",
+    "lg유플러스": "032640.KS",
+    "신한지주": "055550.KS",
+    "kb금융": "105560.KS",
+    "하나금융지주": "086790.KS",
+    "크래프톤": "259960.KS",
+}
+
+
+def get_korean_ticker(company_name: str) -> Optional[str]:
+    """한국 기업명에서 직접 티커를 찾습니다 (번역 오류 방지).
+
+    Args:
+        company_name: 한국어 기업명
+
+    Returns:
+        티커 심볼 (예: "035720.KS") 또는 None
+    """
+    # 정확한 매칭 (대소문자 무시)
+    normalized = company_name.strip().lower()
+
+    for key, ticker in KOREAN_STOCK_TICKERS.items():
+        if key.lower() == normalized:
+            logger.info(f"✅ 한국 기업 티커 매핑: '{company_name}' → {ticker}")
+            return ticker
+
+    # 부분 매칭 (회사명이 키에 포함되는 경우)
+    for key, ticker in KOREAN_STOCK_TICKERS.items():
+        if normalized in key.lower() or key.lower() in normalized:
+            logger.info(f"✅ 한국 기업 티커 부분 매핑: '{company_name}' → {ticker} (키워드: {key})")
+            return ticker
+
+    return None
+
+
 def load_web_page(url: str) -> str:
     """웹 페이지를 로드하고 정제된 텍스트를 반환합니다."""
     try:
@@ -133,11 +195,32 @@ def search_stocks(query: str, max_results: int = 10) -> str:
 
         original_query = query
 
-        # 한글이 포함된 경우 영어로 번역
+        # 한국 기업 티커 직접 매핑 시도 (번역 오류 방지)
+        if is_korean(query):
+            korean_ticker = get_korean_ticker(query)
+            if korean_ticker:
+                # 매핑된 티커로 직접 정보 조회
+                try:
+                    stock = yf.Ticker(korean_ticker)
+                    info = stock.info
+                    company_name = info.get('longName', info.get('shortName', query))
+
+                    output = f"""'{original_query}' 검색 결과: (한국 주요 기업 직접 매핑)
+{'-' * 70}
+• {korean_ticker} - {company_name} [KRX]
+
+💡 상세 정보를 보려면 get_stock_info 도구를 사용하세요.
+{'-' * 70}"""
+                    logger.info(f"한국 기업 직접 매핑 성공 - query: {query} → {korean_ticker}")
+                    return output.strip()
+                except Exception as e:
+                    logger.warning(f"매핑된 티커 정보 조회 실패: {e}, yfinance 검색으로 폴백")
+
+        # 한글이 포함되었지만 매핑되지 않은 경우 영어로 번역
         if is_korean(query):
             query = translate_to_english(query)
             logger.info(f"검색어 번역: '{original_query}' → '{query}'")
-        
+
         logger.info(f"주식 검색 시작 - query: {query}, max_results: {max_results}")
         
         # yfinance Search API 사용
@@ -274,6 +357,7 @@ def get_stock_info(ticker: str) -> Dict[str, Any]:
             "market_cap": info.get('marketCap', 0),
             "pe_ratio": info.get('trailingPE', None),
             "forward_pe": info.get('forwardPE', None),
+            "pb_ratio": info.get('priceToBook', None),
             "dividend_yield": info.get('dividendYield', 0),
             "52week_high": info.get('fiftyTwoWeekHigh', 0),
             "52week_low": info.get('fiftyTwoWeekLow', 0),
@@ -521,12 +605,11 @@ def get_historical_prices(
         if hist.empty:
             return f"{ticker}의 과거 가격 데이터를 찾을 수 없습니다."
         
-        # 최근 10개 데이터만 표시
-        output = f"\n{ticker} 과거 가격 ({period}, {interval} 간격):\n"
-        output += "=" * 80 + "\n"
-        output += hist.tail(10).to_string()
-        output += f"\n\n총 {len(hist)}개 데이터 포인트"
-        
+        # 차트 생성을 위해 전체 데이터를 CSV 형식으로 반환
+        # 첫 줄에 메타데이터, 그 다음 CSV 데이터
+        output = f"{ticker} 과거 가격 ({period}, {interval} 간격) - 총 {len(hist)}개 데이터 포인트\n"
+        output += hist.to_csv()
+
         logger.info(f"과거 가격 조회 완료 - ticker: {ticker}, period: {period}, rows: {len(hist)}")
         return output
     
