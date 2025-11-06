@@ -272,12 +272,12 @@ if prompt := st.chat_input(
 
     try:
         with st.spinner("분석 중..."):
-            # 컨텍스트 윈도우: 최근 20개 메시지만 유지
-            MAX_CONTEXT_MESSAGES = 20
+            # 컨텍스트 윈도우: Config에서 설정 가져오기 (0 = 무제한)
+            MAX_CONTEXT_MESSAGES = Config.MAX_CONTEXT_MESSAGES
             all_messages = st.session_state.messages[:-1]  # 마지막(현재 입력) 제외
 
-            # 최근 20개 메시지만 사용 (헬퍼 함수 사용)
-            if len(all_messages) > MAX_CONTEXT_MESSAGES:
+            # 컨텍스트 메시지 제한 (0이면 무제한)
+            if MAX_CONTEXT_MESSAGES > 0 and len(all_messages) > MAX_CONTEXT_MESSAGES:
                 previous_messages = convert_messages_to_langchain(all_messages[-MAX_CONTEXT_MESSAGES:])
                 logger.info(f"📊 컨텍스트: 최근 {MAX_CONTEXT_MESSAGES}개 메시지 사용 (전체 {len(all_messages)}개 중)")
             else:
