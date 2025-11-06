@@ -6,8 +6,8 @@ services:
     buildCommand: |
       pip install --upgrade pip
       pip install -r requirements.txt
-      python -c "from src.rag.vector_store import VectorStore; vs = VectorStore(); vs.build_vector_store()"
-    startCommand: python -m streamlit run src/streamlit_app.py --server.port=$PORT --server.address=0.0.0.0
+      PYTHONPATH=$PWD python -c "from src.rag.vector_store import VectorStore; vs = VectorStore(); vs.build_vector_store()"
+    startCommand: PYTHONPATH=$PWD streamlit run src/streamlit_app.py --server.port=$PORT --server.address=0.0.0.0
     healthCheckPath: /_stcore/health
     envVars:
       - key: PYTHON_VERSION
