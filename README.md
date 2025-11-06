@@ -232,11 +232,9 @@ uv lock
 
 | 이름      | 역할              | GitHub                               | 담당 기능                                 |
 |----------|------------------|-------------------------------------|-----------------------------------------|
-| **김장원** | 팀장 | [GitHub 링크](https://github.com/jkim1209)             | 아키텍처 디자인 및 관리
-에이전트 및 도구 개발, 모듈 통합 및 배포|
-| **김수환** | 팀원 | [GitHub 링크](https://github.com/suhwankimkim)             | 데모 streamlit 앱 개발,
-에이전트 개발,디버깅 및 리팩토링|
-| **이윤서** | 팀원 | [GitHub 링크](https://github.com/riicoseo)             | RAG 시스템 , LangGraph Workflow 구현|
+| **김장원** | 팀장 | [GitHub 링크](https://github.com/jkim1209)             | 아키텍처 디자인 및 관리, 에이전트 및 도구 개발, 모듈 통합 및 배포|
+| **김수환** | 팀원 | [GitHub 링크](https://github.com/suhwankimkim)             | 데모 streamlit 앱 개발, 에이전트 개발, 디버깅 및 리팩토링|
+| **이윤서** | 팀원 | [GitHub 링크](https://github.com/riicoseo)             | RAG 시스템 개발, LangGraph Workflow 개발|
 | **이가은** | 팀원 | [GitHub 링크](https://github.com/kkaeunii)             | 에이전트 개발, 프롬프팅|
 | **이건희** | 팀원 | [GitHub 링크](https://github.com/GH-Lee33)             | 도구 개발|
 
