@@ -305,6 +305,7 @@ plan/
 logs/*
 charts/*
 reports/*
+test/*
 
 # ChromaDB vector store (not tracked in git)
 data/chroma_store/
