@@ -62,6 +62,7 @@ class Config:
 
     # Chat Session Limits
     MAX_TURNS_PER_SESSION = 10  # 세션당 최대 대화 턴 수 (user+assistant 쌍 10개)
+    MAX_CONTEXT_MESSAGES = int(os.getenv("MAX_CONTEXT_MESSAGES", "20"))  # 최대 컨텍스트 메시지 (0 = 무제한)
 
     # Response Messages
     NOT_FINANCE_RESPONSE = "저는 경제, 금융관련 정보를 통해 전문적으로 사용자의 요청을 도와드리는 AI입니다!\n주식, 환율, 기업 분석 등 금융 관련 질문을 해주시면 답변 도와 드릴게요 😄"
