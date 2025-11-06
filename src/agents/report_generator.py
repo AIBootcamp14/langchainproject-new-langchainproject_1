@@ -28,7 +28,7 @@ logger = get_logger(__name__)
 
 class ReportPlan(BaseModel):
     """보고서 생성 계획 (Structured Output)"""
-    needs_stock_chart: bool = Field(description="주가 차트가 필요한가? (주가 추이, 52주 범위 등)")
+    needs_stock_chart: bool = Field(description="주가 YTD(Year-to-Date) 라인 차트가 필요한가? (단일 주식은 1개, 비교 분석은 각 주식별로)")
     needs_valuation_chart: bool = Field(description="밸류에이션 레이더 차트가 필요한가? (재무 지표 비교)")
     needs_save: bool = Field(description="파일로 저장이 필요한가?")
     save_format: Optional[str] = Field(
@@ -40,6 +40,13 @@ class ReportPlan(BaseModel):
 
 
 class ReportGenerator:
+    """Structured Output 기반 보고서 생성 클래스입니다.
+
+    LLM을 사용하여 보고서 생성 계획(ReportPlan)을 수립한 후,
+    순차적으로 도구를 호출하여 차트 생성 및 파일 저장을 수행합니다.
+    ReAct 에이전트 대신 계획 기반 접근 방식을 사용합니다.
+    """
+
     def __init__(self, model_name: str = None, temperature: float = 0.0):
         """
         Report Generator를 초기화합니다.
@@ -53,8 +60,8 @@ class ReportGenerator:
         logger.info(f"Report Generator 초기화 (Structured Output) - model: {model_name}, temp: {temperature}")
 
         # LLM Manager에서 모델 가져오기
-        llm_manager = get_llm_manager()
-        self.llm = llm_manager.get_model(model_name, temperature=temperature)
+        self.llm_manager = get_llm_manager()
+        self.llm = self.llm_manager.get_model(model_name, temperature=temperature)
 
         logger.info("Report Generator 초기화 완료")
 
@@ -65,9 +72,11 @@ class ReportGenerator:
         messages: list = None,
     ) -> Dict[str, Any]:
         """
-        분석 데이터를 기반으로 보고서를 생성합니다.
+        분석 데이터를 기반으로 Structured Output(ReportPlan)을 사용하여 보고서 생성 계획을 수립하고,
+        계획에 따라 차트 생성 및 파일 저장 도구를 순차적으로 호출합니다.
 
-        Structured Output으로 계획을 수립한 후 순차적으로 도구를 호출합니다.
+        생성된 차트와 파일 경로는 정규식으로 추출하여 반환합니다.
+        계획 수립 실패 시 _generate_report_directly로 폴백하여 기본 보고서를 생성합니다.
 
         Args:
             user_request: 사용자 요청 (예: "삼성 주식 분석 PDF로 저장해줘")
@@ -95,12 +104,16 @@ class ReportGenerator:
             # Step 1: analysis_data를 JSON으로 변환 (도구가 사용)
             analysis_json = json.dumps(analysis_data, ensure_ascii=False, indent=2)
             _set_current_analysis_data(analysis_json)
+            logger.info(f"✅ analysis_data 글로벌 변수 설정 완료 - 길이: {len(analysis_json)}자")
 
             # Step 2: LLM에게 계획 수립 요청 (Structured Output)
             logger.info("📝 보고서 계획 수립 중...")
             plan = self._create_plan(user_request, analysis_data, messages)
 
-            logger.info(f"✅ 계획 완료 - 주가차트: {plan.needs_stock_chart}, "
+            # Step 2.5: 코드 레벨에서 명시적 요청 검증 (LLM 프롬프트의 한계 보완)
+            plan = self._validate_explicit_requests(user_request, plan, analysis_data)
+
+            logger.info(f"✅ 계획 완료 (검증 후) - 주가차트: {plan.needs_stock_chart}, "
                        f"밸류차트: {plan.needs_valuation_chart}, "
                        f"저장: {plan.needs_save} ({plan.save_format})")
 
@@ -112,7 +125,10 @@ class ReportGenerator:
             if plan.needs_stock_chart:
                 logger.info("📊 주가 차트 생성 중...")
                 try:
-                    chart_path = draw_stock_chart.invoke({"output_path": "charts/stock_chart.png"})
+                    chart_path = draw_stock_chart.invoke({
+                        "output_path": "charts/stock_chart.png",
+                        "analysis_data_json": analysis_json
+                    })
                     if "성공" in chart_path or "저장" in chart_path:
                         # "charts/xxx.png" 추출
                         import re
@@ -127,7 +143,10 @@ class ReportGenerator:
             if plan.needs_valuation_chart:
                 logger.info("📊 밸류에이션 레이더 차트 생성 중...")
                 try:
-                    chart_path = draw_valuation_radar.invoke({"output_path": "charts/valuation_radar.png"})
+                    chart_path = draw_valuation_radar.invoke({
+                        "output_path": "charts/valuation_radar.png",
+                        "analysis_data_json": analysis_json
+                    })
                     if "성공" in chart_path or "저장" in chart_path:
                         import re
                         match = re.search(r'(charts/[^\s]+\.png)', chart_path)
@@ -147,7 +166,11 @@ class ReportGenerator:
                     output_filename = f"reports/{safe_title}.{plan.save_format}"
 
                     # 차트 경로를 콤마 구분 문자열로 변환
-                    chart_paths_str = ",".join(charts) if charts else None
+                    # 현재 생성한 차트가 없으면, analysis_data에 저장된 이전 차트 사용 (멀티턴 지원)
+                    all_charts = charts if charts else analysis_data.get("charts", [])
+                    chart_paths_str = ",".join(all_charts) if all_charts else None
+                    if all_charts and not charts:
+                        logger.info(f"📎 이전에 생성된 차트 {len(all_charts)}개를 PDF에 포함합니다: {all_charts}")
 
                     result = save_report_to_file.invoke({
                         "report_text": plan.report_text,
@@ -198,6 +221,65 @@ class ReportGenerator:
                     "error": str(e)
                 }
 
+    def _validate_explicit_requests(
+        self,
+        user_request: str,
+        plan: ReportPlan,
+        analysis_data: Dict[str, Any]
+    ) -> ReportPlan:
+        """
+        명백히 잘못된 경우만 수정하는 최소 개입 검증.
+
+        LLM의 판단을 존중하되, 매우 짧고 간단한 질문에 대해 차트/저장을 True로 설정한 경우만
+        경고하고 로그를 남깁니다. LLM이 엣지 케이스를 처리할 수 있도록 대부분의 판단을 존중합니다.
+
+        Args:
+            user_request: 사용자 요청 문자열
+            plan: LLM이 생성한 ReportPlan
+            analysis_data: 분석 데이터
+
+        Returns:
+            검증된 ReportPlan (대부분 원본 그대로)
+        """
+        user_request_clean = user_request.strip()
+        word_count = len(user_request_clean.split())
+
+        # 매우 짧은 질문 (3단어 이하, "삼성전자는?", "애플 주가" 등)에 대해서만 검증
+        if word_count <= 3:
+            # 매우 짧은 질문인데 저장을 True로 설정한 경우 → 의심스러움
+            if plan.needs_save:
+                logger.warning(f"⚠️ 매우 짧은 질문 ({word_count}단어)인데 needs_save=True → False로 변경")
+                logger.warning(f"   질문: '{user_request_clean}'")
+                return ReportPlan(
+                    needs_stock_chart=plan.needs_stock_chart,
+                    needs_valuation_chart=plan.needs_valuation_chart,
+                    needs_save=False,
+                    save_format=None,
+                    report_title=plan.report_title,
+                    report_text=plan.report_text
+                )
+
+            # 매우 짧은 질문인데 차트를 True로 설정한 경우 → 의심스러움
+            if plan.needs_stock_chart or plan.needs_valuation_chart:
+                logger.warning(f"⚠️ 매우 짧은 질문 ({word_count}단어)인데 차트=True → False로 변경")
+                logger.warning(f"   질문: '{user_request_clean}'")
+                return ReportPlan(
+                    needs_stock_chart=False,
+                    needs_valuation_chart=False,
+                    needs_save=plan.needs_save,
+                    save_format=plan.save_format,
+                    report_title=plan.report_title,
+                    report_text=plan.report_text
+                )
+
+        # 그 외의 경우: LLM 판단을 존중
+        # 로그만 남기고 원본 plan 그대로 반환
+        if plan.needs_save or plan.needs_stock_chart:
+            logger.info(f"📊 LLM 판단 - 차트: {plan.needs_stock_chart}, 저장: {plan.needs_save}")
+            logger.info(f"   질문: '{user_request_clean}' ({word_count}단어)")
+
+        return plan
+
     def _create_plan(
         self,
         user_request: str,
@@ -221,41 +303,23 @@ class ReportGenerator:
         # 프롬프트 구성
         analysis_summary = self._summarize_analysis_data(analysis_data)
 
-        planning_prompt = f"""당신은 금융 보고서 생성 전문가입니다.
-
-사용자 요청과 분석 데이터를 기반으로 보고서 생성 계획을 수립하세요.
-
-사용자 요청: {user_request}
-
-분석 데이터 요약:
-{analysis_summary}
-
-계획 수립 가이드라인:
-1. **needs_stock_chart**: 주가 추이, 52주 범위, 차트 등이 언급되면 True
-2. **needs_valuation_chart**: 재무 지표, 밸류에이션, 비교 분석이 언급되면 True
-3. **needs_save**: 저장, 파일, PDF, MD 등이 언급되면 True
-4. **save_format**:
-   - "pdf" 언급 시 → "pdf"
-   - "markdown", "md" 언급 시 → "md"
-   - "텍스트", "txt" 언급 시 → "txt"
-   - 명시 없으면 "pdf" (기본값)
-5. **report_title**: 회사명 또는 비교 대상 포함 (예: "삼성전자 분석", "AAPL vs MSFT 비교")
-6. **report_text**:
-   - 마크다운 형식으로 작성
-   - 분석 데이터의 핵심 내용 포함
-   - 섹션 구조: 개요, 주가 정보, 재무 지표, 분석 의견, 추천
-   - 차트가 생성될 경우 차트 참조 포함 (예: "![차트](charts/stock_chart.png)")
-
-CRITICAL: report_text는 완전한 보고서여야 합니다. 이것이 사용자에게 전달되는 최종 결과물입니다.
-"""
+        # llm.py의 "plan_report" 프롬프트 사용
+        prompt = self.llm_manager.get_prompt("plan_report")
+        formatted_prompt = prompt.format_messages(
+            user_request=user_request,
+            analysis_summary=analysis_summary
+        )
 
         # Structured Output으로 계획 생성
-        plan = llm_with_structure.invoke(planning_prompt)
+        plan = llm_with_structure.invoke(formatted_prompt)
 
         return plan
 
     def _summarize_analysis_data(self, analysis_data: Dict[str, Any]) -> str:
-        """분석 데이터를 요약하여 프롬프트에 전달할 문자열로 변환"""
+        """분석 데이터를 요약하여 프롬프트에 전달할 문자열로 변환합니다.
+
+        analysis_type에 따라 single/comparison/rag/기타 형식으로 요약합니다.
+        """
         analysis_type = analysis_data.get("analysis_type", "unknown")
 
         if analysis_type == "single":

@@ -1,3 +1,4 @@
+# src/workflow/workflow.py
 from __future__ import annotations
 
 from typing import Dict, List, Literal, Optional, TypedDict, Annotated
@@ -6,10 +7,11 @@ from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 
 from src.agents.financial_analyst import FinancialAnalyst
-from src.agents.quality_evaluator import QualityEvaluator
+from src.evaluator.llm_quality_evaluator import QualityEvaluator
 from src.agents.report_generator import ReportGenerator
 from src.agents.request_analyst import request_analysis, rewrite_query
 from src.agents.supervisor import supervisor
+from src.agents.query_cleaner import query_cleaner
 from src.model.llm import get_llm_manager
 from src.rag.retriever import Retriever
 from src.utils.config import Config
@@ -20,10 +22,10 @@ logger = get_logger(__name__)
 
 
 class WorkflowState(TypedDict, total=False):
-    """LangGraph에서 주고받는 기본 상태 구조.
+    """LangGraph 워크플로우에서 사용하는 상태 구조.
 
-    *** 개인적으로 필요한 상태 값들은 아래에 주석과 함께 추가 부탁드리겠습니다.***
-
+    노드 간에 전달되는 모든 데이터를 포함하며, 질문 분석부터 답변 생성, 품질 평가까지
+    전체 워크플로우의 상태를 추적합니다.
     """
     session_id: str # 사용자 세션 id
     question: str # 사용자의 질문
@@ -62,6 +64,7 @@ class Workflow:
     def _build_graph(self):
         graph = StateGraph(WorkflowState)
 
+        graph.add_node("query_clean", self.query_clean_node)
         graph.add_node("request_analyst", self.request_analyst_node)
         graph.add_node("supervisor", self.supervisor_node)
         graph.add_node("financial_analyst", self.financial_analyst_node)
@@ -69,7 +72,10 @@ class Workflow:
         graph.add_node("report_generator", self.report_generator_node)
         graph.add_node("quality_evaluator", self.quality_evaluator_node)
 
-        graph.set_entry_point("request_analyst")
+        graph.set_entry_point("query_clean")
+
+        # query_clean → request_analyst (모든 질문에 대해 오타 수정 먼저)
+        graph.add_edge("query_clean", "request_analyst")
 
         graph.add_conditional_edges(
             "request_analyst",
@@ -78,6 +84,7 @@ class Workflow:
                 "end": END,
                 "supervisor": "supervisor",
                 "report_generator": "report_generator",
+                "general_conversation": "general_conversation",
             },
         )
 
@@ -111,7 +118,13 @@ class Workflow:
     # Node 
     # ------------------------------------------------------------------ #
     def request_analyst_node(self, state: WorkflowState) -> WorkflowState:
-        """질문이 경제, 금융 도메인인지 확인하고 비금융이면 바로 END 로 종료됩니다."""
+        """사용자 요청을 분석하여 finance/general_conversation/not_finance 3가지로 분류합니다.
+
+        후속 질문(차트/PDF 저장 요청)을 감지하여 이전 분석 데이터가 있으면 report_generator로 직접 라우팅합니다.
+        - finance: supervisor로 라우팅
+        - general_conversation: 일반 대화 노드로 라우팅
+        - not_finance: 안내 메시지와 함께 종료
+        """
         question = state.get("question", "").strip()
         if not question:
             state["answer"] = "질문이 비어 있어 답변을 드릴 수 없습니다."
@@ -120,8 +133,24 @@ class Workflow:
 
         # 후속 질문 감지 (PDF 저장, 차트 생성 등)
         has_previous_analysis = state.get("analysis_data") is not None
-        follow_up_keywords = ["그래프", "차트", "저장", "그려", "다운로드", "파일", "pdf", "md", "markdown", "보고서"]
-        is_follow_up = any(keyword in question.lower() for keyword in follow_up_keywords)
+
+        # 후속 질문 키워드 (차트/저장만 요청)
+        follow_up_keywords = ["차트", "그래프", "저장", "그려", "다운로드", "파일", "pdf", "md", "markdown"]
+        has_follow_up_keyword = any(keyword in question.lower() for keyword in follow_up_keywords)
+
+        # 새로운 분석 요청 키워드 (새로운 작업)
+        new_request_keywords = ["분석", "비교", "알려줘", "조회", "찾아", "검색", "주식", "기업", "회사"]
+        # 예외: "분석 결과", "분석내용", "보고서" 등은 기존 결과를 참조하는 것이므로 새로운 요청이 아님
+        exception_patterns = ["분석 결과", "분석결과", "분석내용", "분석 내용", "보고서", "리포트", "비교 분석", "비교분석"]
+        has_exception = any(pattern in question for pattern in exception_patterns)
+        has_new_request = any(keyword in question.lower() for keyword in new_request_keywords) and not has_exception
+
+        # 추가 요청 패턴 (~도, ~까지, ~포함)
+        additional_patterns = ["도 ", "까지", "포함", "추가", "더"]
+        has_additional_pattern = any(pattern in question for pattern in additional_patterns)
+
+        # 후속 질문 판단: 키워드 있고 + 새로운 요청 없고 + 추가 요청 패턴 없음
+        is_follow_up = has_follow_up_keyword and not has_new_request and not has_additional_pattern
 
         if has_previous_analysis and is_follow_up:
             logger.info(f"📊 후속 질문 감지 (request_analyst 우회) - 이전 분석 데이터로 바로 report_generator 호출")
@@ -132,11 +161,16 @@ class Workflow:
         # 일반적인 금융 질문 분석
         analysis_result = request_analysis(state, llm=self.shared_llm)
         label = analysis_result.get("label")
+
         if label == "finance":
             state["route"] = "supervisor"
-        else:
+        elif label == "general_conversation":
+            # 일반 대화는 general_conversation_node로 라우팅
+            state["route"] = "general_conversation"
+        else:  # not_finance
             # 비금융 질문인 경우 안내 메시지를 그대로 전달
             state["answer"] = analysis_result.get("return_msg", "경제, 금융관련 질문이 아닙니다.")
+            state["quality_passed"] = True  # 정상 응답이므로 success로 저장
             state["route"] = "end"
         return state
 
@@ -189,8 +223,44 @@ class Workflow:
 
         return state
 
+    def query_clean_node(self, state: WorkflowState) -> WorkflowState:
+        """모든 사용자 질문의 오탈자를 수정하고 대화 문맥을 파악하여 정확한 쿼리로 재작성합니다.
+
+        에러 발생 시에도 원본 질문을 유지하며 워크플로우를 계속 진행합니다.
+        """
+        question = state.get("question", "")
+        messages = state.get('messages', [])
+        logger.info("="*10 + " Query Clean node 진입 " + "="*10)
+        logger.info(f"원본 질문: {question}")
+
+        try:
+            result = query_cleaner({'question': question, 'messages': messages}, llm=self.shared_llm)
+            rewritten_query = result.get('rewritten_query', question)
+
+            # 원본과 다른 경우에만 로그 출력
+            if rewritten_query != question:
+                logger.info(f"✨ 쿼리 정제 완료: {question} → {rewritten_query}")
+                state['question'] = rewritten_query
+            else:
+                logger.info("ℹ️ 쿼리 변경 불필요 (원본 그대로 사용)")
+
+        except Exception as e:
+            logger.error(f"❌ query_cleaner 실행 중 오류 발생: {e}", exc_info=True)
+            logger.warning("⚠️ 쿼리 정제 실패 - 원본 질문 그대로 사용")
+            # 에러 발생 시 원본 질문 유지
+
+        # graph.add_edge로 자동 연결되므로 route 설정 불필요
+        return state
+
     def general_conversation_node(self, state: WorkflowState) -> WorkflowState:
-        """일반 대화, 인사, 감사, 메타 질문을 처리합니다."""
+        """일반 대화, 인사, 감사, 메타 질문을 3단계로 처리합니다.
+
+        1) 규칙 기반 패턴 매칭으로 빠른 응답 (인사, 감사, 작별)
+        2) 대화 히스토리를 참조한 메타 질문 처리 ("방금 뭐 물어봤지?")
+        3) 복잡한 경우 LLM 기반 응답 생성
+
+        모든 응답은 quality_passed=True로 설정되어 품질 평가를 우회합니다.
+        """
         question = state.get("question", "").strip()
         question_lower = question.lower()
         messages = state.get("messages", [])
@@ -204,18 +274,21 @@ class Workflow:
 
         if any(g in question_lower for g in greetings):
             state["answer"] = "안녕하세요! 금융 관련 궁금한 점이 있으시면 언제든 물어보세요. 📊"
+            state["quality_passed"] = True  # 정상 응답
             state["route"] = "end"
             logger.info("💬 규칙 기반 응답: 인사")
             return state
 
         if any(t in question_lower for t in thanks):
             state["answer"] = "도움이 되었다니 기쁩니다! 다른 궁금한 점이 있으시면 말씀해주세요. 😊"
+            state["quality_passed"] = True  # 정상 응답
             state["route"] = "end"
             logger.info("💬 규칙 기반 응답: 감사")
             return state
 
         if any(gb in question_lower for gb in goodbyes):
             state["answer"] = "좋은 하루 되세요! 언제든 다시 찾아주세요. 👋"
+            state["quality_passed"] = True  # 정상 응답
             state["route"] = "end"
             logger.info("💬 규칙 기반 응답: 작별")
             return state
@@ -231,11 +304,13 @@ class Workflow:
             if len(user_messages) >= 1:  # 이전 메시지가 있으면
                 prev_question = user_messages[-1].content  # 가장 최근 사용자 질문
                 state["answer"] = f'방금 물어보신 질문은 "{prev_question}" 입니다.'
+                state["quality_passed"] = True  # 정상 응답
                 state["route"] = "end"
                 logger.info(f"💬 메타 질문 처리: 이전 질문 인용 - {prev_question[:50]}")
                 return state
             else:
                 state["answer"] = "이전 질문이 없습니다. 지금 처음 대화를 시작하신 것 같네요!"
+                state["quality_passed"] = True  # 정상 응답
                 state["route"] = "end"
                 logger.info("💬 메타 질문 처리: 이전 질문 없음")
                 return state
@@ -252,18 +327,25 @@ class Workflow:
             response = chain.invoke({"input": question, "chat_history": messages})
 
             state["answer"] = response.content.strip()
+            state["quality_passed"] = True  # 정상 응답
             state["route"] = "end"
             logger.info(f"💬 LLM 응답 생성 완료 - 길이: {len(state['answer'])}자")
 
         except Exception as e:
             logger.error(f"❌ general_conversation_node LLM 처리 실패: {e}")
             state["answer"] = "죄송합니다. 응답 생성 중 문제가 발생했습니다. 다시 시도해주세요."
+            state["quality_passed"] = True  # 에러 메시지도 정상 응답으로 처리
             state["route"] = "end"
 
         return state
 
     def report_generator_node(self, state: WorkflowState) -> WorkflowState:
-        """RAG 검색 혹은 report 작성을 수행하여 최종 답변을 생성합니다."""
+        """RAG 검색 또는 financial_analyst의 분석 결과를 바탕으로 최종 보고서를 생성합니다.
+
+        RAG 검색 결과가 없으면 financial_analyst로 자동 폴백합니다.
+        생성된 차트와 파일 정보를 state의 current_charts, current_saved_file 필드에 저장하여
+        streamlit에서 표시할 수 있도록 합니다.
+        """
         question = state.get("question", "")
         messages = state.get('messages', [])
         logger.info(f"📝 report_generator_node 진입")
@@ -348,6 +430,9 @@ class Workflow:
             if report.get("charts"):
                 state["current_charts"] = report["charts"]
                 logger.info(f"📊 현재 응답 차트 저장: {report['charts']}")
+                # analysis_data에도 차트 경로 저장 (후속 PDF 저장 요청을 위해)
+                if "analysis_data" in state and isinstance(state["analysis_data"], dict):
+                    state["analysis_data"]["charts"] = report["charts"]
             else:
                 state["current_charts"] = []  # 차트 생성 안 했으면 빈 리스트
 
@@ -375,7 +460,11 @@ class Workflow:
         return state
 
     def quality_evaluator_node(self, state: WorkflowState) -> WorkflowState:
-        """생성된 답변을 평가하고 필요 시 쿼리를 재작성합니다."""
+        """생성된 답변의 품질을 평가하고 실패 시 재시도 여부를 결정합니다.
+
+        동일한 실패 사유가 2회 이상 반복되거나 총 재시도 횟수가 2회 이상이면 조기 종료하고
+        사용자 안내 메시지를 반환합니다. 품질 통과 시 쿼리를 재작성하여 재시도합니다.
+        """
         question = state.get("question", "")
         answer = state.get("answer", "")
         result = self.quality_evaluator.evaluate_answer(question, answer)
@@ -466,17 +555,21 @@ class Workflow:
     # ------------------------------------------------------------------ #
     # Edge routing helpers
     # ------------------------------------------------------------------ #
-    def _route_from_request_analyst(self, state: WorkflowState) -> Literal["end", "supervisor", "report_generator"]:
+    def _route_from_request_analyst(self, state: WorkflowState) -> Literal["end", "supervisor", "report_generator", "general_conversation"]:
         """
         request_analyst에서 다음 노드로 라우팅합니다.
         - 후속 질문(차트/PDF 요청) → report_generator로 직행
         - 금융 질문 → supervisor
+        - 일반 대화 → general_conversation
         - 비금융 질문 → end
         """
         route = state.get("route", "supervisor")
         if route == "report_generator":
             logger.info("🎯 request_analyst → report_generator 직행 (후속 질문)")
             return "report_generator"
+        elif route == "general_conversation":
+            logger.info("💬 request_analyst → general_conversation (일반 대화)")
+            return "general_conversation"
         elif route == "end":
             return "end"
         else:

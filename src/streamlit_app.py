@@ -1,5 +1,4 @@
-# src/web/stream_multiturn_v.py
-
+# src/streamlit_app.py
 import streamlit as st
 import uuid
 import re
@@ -8,7 +7,15 @@ from src.workflow.workflow import build_workflow
 from src.database.chat_history import ChatHistoryDB
 from src.utils.config import Config
 from src.utils.logger import get_logger
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from src.utils.workflow_helpers import (
+    convert_messages_to_langchain,
+    extract_previous_analysis_data,
+    process_chart_paths,
+    process_file_paths,
+    build_response_metadata,
+    get_project_root
+)
+from langchain_core.messages import HumanMessage, AIMessage
 
 # 로거 초기화
 logger = get_logger(__name__)
@@ -22,73 +29,12 @@ def init_resources():
     workflow = build_workflow()
     return db, workflow
 
-# ===== 1-1. 대화 요약 함수 =====
-def summarize_conversation(messages_to_summarize: list) -> str:
-    """
-    중간 메시지들을 LLM으로 요약하여 컨텍스트 효율화
-
-    Args:
-        messages_to_summarize: 요약할 메시지 리스트 (dict 형태)
-
-    Returns:
-        요약된 텍스트 (200-300 토큰)
-    """
-    if not messages_to_summarize or len(messages_to_summarize) == 0:
-        return ""
-
-    try:
-        from src.model.llm import get_llm_manager
-
-        # LLM Manager에서 경량 모델 가져오기
-        llm_manager = get_llm_manager()
-        summarizer = llm_manager.get_model("solar-mini", temperature=0)
-
-        # 요약할 대화 텍스트 구성
-        conversation_text = ""
-        for idx, msg in enumerate(messages_to_summarize, 1):
-            role = "사용자" if msg["role"] == "user" else "AI"
-            content = msg["content"]
-            # 너무 긴 내용은 잘라내기 (각 메시지당 최대 500자)
-            if len(content) > 500:
-                content = content[:500] + "..."
-            conversation_text += f"{idx}. {role}: {content}\n\n"
-
-        # 요약 프롬프트
-        summary_prompt = f"""다음은 사용자와 AI 금융 상담 에이전트의 이전 대화입니다.
-이 대화의 핵심 내용을 간결하게 요약해주세요.
-
-요약 시 포함할 내용:
-- 사용자가 질문한 주요 주제 (주식, 기업명 등)
-- AI가 제공한 핵심 분석 내용
-- 중요한 수치나 결론
-
-요약 형식:
-"이전 대화에서 사용자는 [주제]에 대해 질문했고, AI는 [핵심 내용]을 분석했습니다."
-
-대화:
-{conversation_text}
-
-요약 (200자 이내):"""
-
-        # LLM 호출
-        summary = summarizer.invoke(summary_prompt).content
-
-        logger.info(f"📝 {len(messages_to_summarize)}개 메시지 요약 완료 (길이: {len(summary)}자)")
-        return summary.strip()
-
-    except Exception as e:
-        logger.error(f"❌ 대화 요약 실패: {e}")
-        # 요약 실패 시 간단한 폴백 메시지
-        return f"[이전 대화 {len(messages_to_summarize)}개 메시지 생략됨]"
-
 # ===== 2. Session ID 자동 생성 =====
 if 'session_id' not in st.session_state:
     st.session_state.session_id = str(uuid.uuid4())
     st.session_state.messages = []
     st.session_state.loaded = False
     st.session_state.user_input = ""
-    st.session_state.conversation_summary = ""
-    st.session_state.last_summarized_count = 0
 
 # ===== 3. 사이드바: 대화 관리 =====
 with st.sidebar:
@@ -114,8 +60,6 @@ with st.sidebar:
             st.session_state.messages = []
             st.session_state.loaded = False
             st.session_state.user_input = ""
-            st.session_state.conversation_summary = ""
-            st.session_state.last_summarized_count = 0
             st.rerun()
 
     st.divider()
@@ -162,8 +106,6 @@ with st.sidebar:
                         st.session_state.messages = []
                         st.session_state.loaded = False
                         st.session_state.user_input = ""
-                        st.session_state.conversation_summary = ""
-                        st.session_state.last_summarized_count = 0
                         st.rerun()
 
             with col2:
@@ -178,8 +120,6 @@ with st.sidebar:
                         st.session_state.messages = []
                         st.session_state.loaded = False
                         st.session_state.user_input = ""
-                        st.session_state.conversation_summary = ""
-                        st.session_state.last_summarized_count = 0
 
                     st.rerun()
 
@@ -223,7 +163,8 @@ if not st.session_state.loaded:
             "images": images_abs,
             "pdf_path": pdf_path,
             "md_path": md_path,
-            "txt_path": txt_path
+            "txt_path": txt_path,
+            "metadata": msg.get("metadata", {})  # 전체 metadata 포함 (analysis_data 포함)
         })
 
     st.session_state.loaded = True
@@ -312,7 +253,8 @@ if prompt := st.chat_input(
         "role": "user",
         "content": prompt,
         "images": [],
-        "pdf_path": None
+        "pdf_path": None,
+        "metadata": {}
     })
 
     # 유저 메시지 즉시 표시
@@ -330,66 +272,20 @@ if prompt := st.chat_input(
 
     try:
         with st.spinner("분석 중..."):
-            # 슬라이딩 윈도우 + 요약: 컨텍스트 효율화
-            # 초기 페어 유지 + 중간 메시지 요약 + 최근 메시지 유지
-            MAX_CONTEXT_MESSAGES = 20  # 최대 20개 메시지
-            SUMMARIZE_INTERVAL = 5  # 5개마다 재요약
+            # 컨텍스트 윈도우: 최근 20개 메시지만 유지
+            MAX_CONTEXT_MESSAGES = 20
             all_messages = st.session_state.messages[:-1]  # 마지막(현재 입력) 제외
 
-            previous_messages = []  # LangChain 메시지 리스트
-
+            # 최근 20개 메시지만 사용 (헬퍼 함수 사용)
             if len(all_messages) > MAX_CONTEXT_MESSAGES:
-                # 메시지가 많을 경우: 초기 + 요약 + 최근
-                initial_pair = all_messages[:2]  # 첫 2개
-                middle_messages = all_messages[2:-18]  # 중간 메시지들
-                recent_messages = all_messages[-18:]  # 최근 18개
-
-                # 중간 메시지 요약
-                should_summarize = (
-                    len(all_messages) - st.session_state.last_summarized_count >= SUMMARIZE_INTERVAL
-                ) or (st.session_state.conversation_summary == "")
-
-                if should_summarize and len(middle_messages) > 0:
-                    logger.info(f"📝 중간 메시지 {len(middle_messages)}개 요약 시작...")
-                    st.session_state.conversation_summary = summarize_conversation(middle_messages)
-                    st.session_state.last_summarized_count = len(all_messages)
-                    logger.info(f"✅ 요약 완료: {st.session_state.conversation_summary[:100]}...")
-
-                # 컨텍스트 구성: 초기 2개
-                for msg in initial_pair:
-                    if msg["role"] == "user":
-                        previous_messages.append(HumanMessage(content=msg["content"]))
-                    else:
-                        previous_messages.append(AIMessage(content=msg["content"]))
-
-                # 요약 삽입 (SystemMessage)
-                if st.session_state.conversation_summary:
-                    previous_messages.append(
-                        SystemMessage(content=f"[이전 대화 요약]\n{st.session_state.conversation_summary}")
-                    )
-
-                # 최근 18개
-                for msg in recent_messages:
-                    if msg["role"] == "user":
-                        previous_messages.append(HumanMessage(content=msg["content"]))
-                    else:
-                        previous_messages.append(AIMessage(content=msg["content"]))
-
+                previous_messages = convert_messages_to_langchain(all_messages[-MAX_CONTEXT_MESSAGES:])
+                logger.info(f"📊 컨텍스트: 최근 {MAX_CONTEXT_MESSAGES}개 메시지 사용 (전체 {len(all_messages)}개 중)")
             else:
-                # 메시지가 적을 경우: 전체 사용
-                for msg in all_messages:
-                    if msg["role"] == "user":
-                        previous_messages.append(HumanMessage(content=msg["content"]))
-                    else:
-                        previous_messages.append(AIMessage(content=msg["content"]))
+                previous_messages = convert_messages_to_langchain(all_messages)
+                logger.info(f"📊 컨텍스트: 전체 {len(all_messages)}개 메시지 사용")
 
-            # 가장 최근 assistant 메시지에서 analysis_data 추출 (후속 질문용)
-            prev_analysis_data = None
-            history = db.get_history(st.session_state.session_id, limit=20)
-            for msg in history:  # 최신순이므로 첫 assistant 메시지가 가장 최근
-                if msg["role"] == "assistant" and msg.get("metadata", {}).get("analysis_data"):
-                    prev_analysis_data = msg["metadata"]["analysis_data"]
-                    break  # 가장 최근 것 사용
+            # 가장 최근 assistant 메시지에서 analysis_data 추출 (헬퍼 함수 사용)
+            prev_analysis_data = extract_previous_analysis_data(st.session_state.messages)
 
             # 멀티턴 대화 실행
             result = workflow.run(
@@ -402,37 +298,31 @@ if prompt := st.chat_input(
         answer = result.get("answer", "")
         quality_passed = result.get("quality_passed", False)
 
-        # 현재 응답의 차트만 표시
-        if result.get("current_charts"):
-            base_path = Path(__file__).parent.parent.parent  # ai_agent_project 루트
+        # 프로젝트 루트 경로 계산 (헬퍼 함수 사용)
+        # src/web/streamlit_app.py → ai_agent_project (2단계 상위)
+        base_path = get_project_root(__file__, levels_up=2)
 
-            image_paths = []
-            for chart_path in result["current_charts"]:
-                # 상대경로를 절대경로로 변환
-                abs_path = str(base_path / chart_path)
-                image_paths.append(abs_path)
-                logger.info(f"📊 현재 응답 차트 절대경로 변환: {chart_path} → {abs_path}")
+        # 차트 경로 처리 (헬퍼 함수 사용)
+        image_paths = process_chart_paths(result, base_path)
 
-        # 현재 응답의 파일만 표시
-        saved_file_path = result.get("current_saved_file")
+        # 파일 경로 처리 (헬퍼 함수 사용)
+        file_paths = process_file_paths(result, base_path)
+        pdf_path = file_paths.get("pdf_path")
+        md_path = file_paths.get("md_path")
+        txt_path = file_paths.get("txt_path")
 
-        if saved_file_path:
-            base_path = Path(__file__).parent.parent.parent
-            abs_saved_path = str(base_path / saved_file_path)
-
-            ext = Path(abs_saved_path).suffix.lower()
-            if ext == '.pdf':
-                pdf_path = abs_saved_path
-            elif ext == '.md':
-                md_path = abs_saved_path
-            elif ext == '.txt':
-                txt_path = abs_saved_path
-
-        # 보고서에서 "Charts:" 경로 텍스트 제거
+        # 보고서에서 파일 경로 텍스트 제거 (차트 다운로드 버튼만 표시)
         # "Charts:\n- charts/xxx.png\n- charts/yyy.png" 패턴 제거
         answer = re.sub(r'Charts?:\s*\n(?:[-•]\s*charts/[^\n]+\n?)+', '', answer, flags=re.IGNORECASE)
-        # 단독 경로 라인도 제거 (예: "- charts/xxx.png")
+        # 단독 차트 경로 라인도 제거 (예: "- charts/xxx.png")
         answer = re.sub(r'^\s*[-•]\s*charts/[^\n]+\s*$', '', answer, flags=re.MULTILINE)
+
+        # 보고서 저장 경로 텍스트 제거 (다운로드 버튼만 표시)
+        # "Saved to: reports/xxx.pdf" 패턴 제거
+        answer = re.sub(r'Saved\s+to:\s*reports/[^\n]+', '', answer, flags=re.IGNORECASE)
+        answer = re.sub(r'저장\s*(위치|경로|됨)?:?\s*reports/[^\n]+', '', answer, flags=re.IGNORECASE)
+        # 단독 보고서 경로 라인도 제거 (예: "- reports/xxx.pdf")
+        answer = re.sub(r'^\s*[-•]\s*reports/[^\n]+\s*$', '', answer, flags=re.MULTILINE)
 
     except Exception as e:
         # 에러 발생 시 사용자에게 친절한 메시지 표시
@@ -468,6 +358,9 @@ if prompt := st.chat_input(
             "analysis_data": {}
         }
 
+    # 메타데이터 구성 (헬퍼 함수 사용)
+    metadata = build_response_metadata(result, image_paths, file_paths)
+
     # DB에 저장 (analysis_data 전체 포함)
     db.add_message(
         session_id=st.session_state.session_id,
@@ -476,23 +369,18 @@ if prompt := st.chat_input(
         agent_name="report_generator",
         status="success" if quality_passed else "failed",
         quality_score=result.get("quality_detail", {}).get("score"),
-        metadata={
-            "image_paths": image_paths,
-            "pdf_path": pdf_path,
-            "md_path": md_path,
-            "txt_path": txt_path,
-            "analysis_data": result.get("analysis_data")  # 전체 analysis_data 저장
-        }
+        metadata=metadata
     )
 
-    # 세션 스테이트에 추가
+    # 세션 스테이트에 추가 (metadata 포함)
     st.session_state.messages.append({
         "role": "assistant",
         "content": answer,
         "images": image_paths,
         "pdf_path": pdf_path,
         "md_path": md_path,
-        "txt_path": txt_path
+        "txt_path": txt_path,
+        "metadata": metadata
     })
 
     # 답변 즉시 표시 (st.rerun() 전에)
@@ -549,5 +437,5 @@ if prompt := st.chat_input(
                     key="dl_txt_new"
                 )
 
-    # 페이지 리렌더링 (모든 메시지를 126번째 줄 루프에서 표시)
+    # 페이지 리렌더링
     st.rerun()
