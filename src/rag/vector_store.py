@@ -11,11 +11,13 @@ from langchain_core.documents import Document
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_core.documents import Document
-from typing import List, Optional, Tuple
+
 from src.utils.config import Config
+from src.utils.logger import get_logger
 
 load_dotenv()
+
+logger = get_logger(__name__)
 
 PDF_PATH_PATTERN = Config.PDF_PATH_PATTERN
 PERSIST_DIR = Config.PERSIST_DIR
@@ -94,8 +96,8 @@ class VectorStore:
     def pick_splitter(pages):
         lens = [len(d.page_content or "") for d in pages]
         med = stats.median(lens)
-        print(" 중간 값 : "+str(med))
-        
+        logger.debug(f"페이지 중간 값: {med}")
+
         chunk_size, chunk_overlap = VectorStore._decide_chunk_params(med)
 
         # 용어집/정의집(짧은 항목 위주)일 가능성이 높을 때 분리자 우선
@@ -134,11 +136,11 @@ class VectorStore:
 
         all_docs = []
         for pdf_file in pdf_files:
-            print(f" Processing: {pdf_file}")
+            logger.info(f"PDF 처리 중: {pdf_file}")
             loader = PyPDFLoader(pdf_file)
             pages = list(loader.lazy_load())
             splitter = self.pick_splitter(pages)
-            print(f"splitter 선택 : ", splitter)
+            logger.debug(f"Splitter 선택: {splitter}")
             docs = splitter.split_documents(pages)
 
             for doc in docs:
@@ -147,7 +149,7 @@ class VectorStore:
 
         if all_docs:
             vectorstore.add_documents(all_docs)
-        print(f" 총 {len(all_docs)}개 청크 저장 완료 ({len(pdf_files)}개 PDF)")
+        logger.info(f"총 {len(all_docs)}개 청크 저장 완료 ({len(pdf_files)}개 PDF)")
         return vectorstore
 
     def similarity_search(self, query: str, top_k: int = 3):
@@ -165,22 +167,22 @@ class VectorStore:
     def inspect_collections(self):
         client = chromadb.PersistentClient(path=self.persist_dir)
         collections = [c.name for c in client.list_collections()]
-        print(" Collections:", collections)
+        logger.info(f"Collections: {collections}")
 
         if self.collection_name not in collections:
-            print(f" '{self.collection_name}' 컬렉션을 찾지 못했습니다.")
+            logger.warning(f"'{self.collection_name}' 컬렉션을 찾지 못했습니다.")
             return
 
         collection = client.get_collection(self.collection_name)
         count = collection.count()
-        print(f" '{self.collection_name}' 내 문서 수: {count}")
+        logger.info(f"'{self.collection_name}' 내 문서 수: {count}")
 
         items = collection.peek()
-        print(f" 샘플 개수: {len(items['ids'])}")
+        logger.info(f"샘플 개수: {len(items['ids'])}")
         for i in range(min(3, len(items["ids"]))):
-            print(f"\nID: {items['ids'][i]}")
-            print(f"Metadata: {items['metadatas'][i]}")
-            print(f"Text snippet: {items['documents'][i][:150]}...")
+            logger.debug(f"ID: {items['ids'][i]}")
+            logger.debug(f"Metadata: {items['metadatas'][i]}")
+            logger.debug(f"Text snippet: {items['documents'][i][:150]}...")
 
 
 def main():
