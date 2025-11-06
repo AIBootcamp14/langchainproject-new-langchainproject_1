@@ -10,18 +10,12 @@ LangChain/LangGraph 기반의 멀티 에이전트 시스템으로, 금융 도메
 ## Requirements (uv 사용)
 
 ```bash
-# 1) (선택) 가상환경 생성 
-uv venv
-
-# 2) 의존성 설치
-#  pyproject.toml 기반 설치
+#  의존성 설치
+#  1) pyproject.toml 기반 설치
 uv sync
 
-#  또는 requirements.txt 기반 설치
+#  2) 또는 requirements.txt 기반 설치
 uv pip install -r requirements.txt
-
-# 3) (선택) 잠금파일 생성/갱신 
-uv lock
 ```
 
 ## 디렉토리 구조
@@ -255,11 +249,11 @@ uv lock
 1. **필수 라이브러리 설치:**
 
     ```bash
-    # uv를 사용한 설치
-    uv pip install -r requirements.txt
-    
-    # 또는 pyproject.toml 기반
+    # 1) pyproject.toml 기반 설치치
     uv sync
+
+    # 2) 혹은 requirements.txt 를 사용한 설치
+    uv pip install -r requirements.txt
     ```
 
 2. **환경변수 설정 (`.env` 파일 생성):**
