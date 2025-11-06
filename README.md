@@ -1,12 +1,58 @@
 # **금융 AI 에이전트 프로젝트**
 
-LangChain/LangGraph 기반의 멀티 에이전트 시스템으로, 금융 도메인 Q&A, 주식 분석, RAG 기반 용어 검색을 지원합니다.
+LangChain/LangGraph 기반의 멀티 에이전트 시스템으로, 금융 도메인 Q&A, 주식 분석 및 비교, 차트 생성과 문서 파일 저장을 지원합니다.
 
 - **프로젝트 기간:** 2025.10.28 ~ 2025.11.06  
 
+> **발표 자료:** [Google Drive](https://drive.google.com/file/d/1wtD5dT1Mg_HFqJGC8Mj2lduqjFYTcFIH/view?usp=sharing)
+
 ---
 
-## Requirements (uv 사용)
+## 📚 Table of Contents
+
+[1. 개요](#1-개요)
+   [1.1. 팀원 소개](#11-팀원-소개)
+   [1.2 Requirements (uv 사용)](#12-requirements-uv-사용)
+   [1.3 디렉토리 구조](#13-디렉토리-구조)
+[2. 서비스 구성 요소](#2-서비스-구성-요소)
+   [2.1 주요 기능](#21-주요-기능)
+   [2.2 사용자 흐름](#22-사용자-흐름)
+[3. 개발환경 및 협업 툴](#3-개발환경-및-협업-툴)
+   [3.1 Environments](#31-environments)
+   [3.2 협업 툴](#32-협업-툴)
+[4. 최종 선정 AI 모델 구조](#4-최종-선정-ai-모델-구조)
+[5. 서비스 아키텍처](#5-서비스-아키텍처)
+   [5.1 시스템 구조도](#51-시스템-구조도)
+   [5.2 데이터 흐름도](#52-데이터-흐름도)
+[6. 사용 기술 스택](#6-사용-기술-스택)
+   [6.1 백엔드 & 프레임워크](#61-백엔드--프레임워크)
+   [6.2 RAG & 데이터](#62-rag--데이터)
+   [6.3 데이터 시각화 & 보고서](#63-데이터-시각화--보고서)
+   [6.4 배포 및 운영](#64-배포-및-운영)
+[7. Appendix](#7-appendix)
+   [7.1 참고 자료](#71-참고-자료)
+   [7.2 설치 및 실행 방법 (uv)](#72-설치-및-실행-방법-uv)
+[8. 사용 예시](#8-사용-예시)
+   [8.1 시연 화면](#81-시연-화면)
+   [8.2 질문 예시](#82-질문-예시)
+   [8.3 응답 형태](#83-응답-형태)
+
+---
+
+## **1. 개요**
+
+### **1.1. 팀원 소개**
+
+| 이름      | 역할              | GitHub                               | 담당 기능                                 |
+|----------|------------------|-------------------------------------|-----------------------------------------|
+| **김장원** | 팀장 | [GitHub 링크](https://github.com/jkim1209)             | 아키텍처 디자인 및 관리, 에이전트 및 도구 개발, 모듈 통합 및 배포|
+| **김수환** | 팀원 | [GitHub 링크](https://github.com/suhwankimkim)             | 데모 streamlit 앱 개발, 에이전트 개발, 디버깅 및 리팩토링|
+| **이윤서** | 팀원 | [GitHub 링크](https://github.com/riicoseo)             | RAG 시스템 개발, LangGraph Workflow 개발|
+| **이가은** | 팀원 | [GitHub 링크](https://github.com/kkaeunii)             | 에이전트 개발, 프롬프팅|
+| **이건희** | 팀원 | [GitHub 링크](https://github.com/GH-Lee33)             | 도구 개발|
+
+
+### **1.2 Requirements (uv 사용)**
 
 ```bash
 #  의존성 설치
@@ -17,7 +63,7 @@ uv sync
 uv pip install -r requirements.txt
 ```
 
-## 디렉토리 구조
+### **1.3 디렉토리 구조**
 
 ```bash
 .
@@ -93,9 +139,11 @@ uv pip install -r requirements.txt
 └── pyproject.toml                                     # uv 기반 프로젝트 설정
 ```
 
-## **1. 서비스 구성 요소**
+---
 
-### **1.1 주요 기능**
+## **2. 서비스 구성 요소**
+
+### **2.1 주요 기능**
 
 1. **질의 정제 (Query Cleaning)**: 사용자 입력의 오타 수정, 문맥 기반 의도 명확화, 후속 질문 감지
 
@@ -125,7 +173,7 @@ uv pip install -r requirements.txt
 
 10. **웹/CLI 인터페이스**: Streamlit 기반 웹 UI 및 CLI 인터페이스 제공
 
-### **1.2 사용자 흐름**
+### **2.2 사용자 흐름**
 
 1. **질문 입력** → 사용자가 Streamlit UI 또는 CLI에서 질문 입력
 
@@ -147,14 +195,14 @@ uv pip install -r requirements.txt
 
 ---
 
-## **2. 개발환경 및 협업 툴**
+## **3. 개발환경 및 협업 툴**
 
-### **2.1 Environments**
+### **3.1 Environments**
 
 - **개발 환경:** Python 3.10+, Ubuntu 20.04.6 LTS
 - **테스트 환경:** 로컬 개발 환경
 
-### **2.2 협업 툴**
+### **3.2 협업 툴**
 
 - **소스 관리:** [GitHub](https://github.com/AIBootcamp14/langchainproject-new-langchainproject_1)
 - **프로젝트 관리:** [Notion](https://www.notion.so/_1-29640cb3731d80a19382f147704be42d)
@@ -163,7 +211,7 @@ uv pip install -r requirements.txt
 
 ---
 
-## **3. 최종 선정 AI 모델 구조**
+## **4. 최종 선정 AI 모델 구조**
 
 - **LLM 모델**: Upstage Solar-Pro2
 - **임베딩 모델**: BAAI/bge-m3 (HuggingFace)
@@ -175,15 +223,15 @@ uv pip install -r requirements.txt
 
 ---
 
-## **4. 서비스 아키텍처**
+## **5. 서비스 아키텍처**
 
-### **4.1 시스템 구조도**
+### **5.1 시스템 구조도**
 
 서비스 아키텍처 다이어그램을 첨부합니다.
 
 ![서비스 아키텍처](img/workflow_final.png)
 
-### **4.2 데이터 흐름도**
+### **5.2 데이터 흐름도**
 
 ```
 사용자 질문
@@ -205,44 +253,32 @@ uv pip install -r requirements.txt
 
 ---
 
-## **5. 사용 기술 스택**
+## **6. 사용 기술 스택**
 
-### **5.1 백엔드 & 프레임워크**
+### **6.1 백엔드 & 프레임워크**
 
 - **프레임워크**: LangChain, LangGraph, Streamlit
 - **LLM**: Upstage ChatUpstage (Solar-Pro2)
 - **데이터베이스**: SQLite (대화 히스토리), ChromaDB (벡터 저장소)
 - **패키지 관리**: uv
 
-### **5.2 RAG & 데이터**
+### **6.2 RAG & 데이터**
 
 - **벡터 DB**: ChromaDB
 - **임베딩**: HuggingFace Embeddings (BAAI/bge-m3)
 - **문서 처리**: PyPDFLoader, RecursiveCharacterTextSplitter
 - **금융 데이터**: yfinance, Tavily 검색 API
 
-### **5.3 데이터 시각화 & 보고서**
+### **6.3 데이터 시각화 & 보고서**
 
 - **차트**: matplotlib, pandas
 - **보고서 생성**: ReportLab (PDF), Markdown
 
-### **5.4 배포 및 운영**
+### **6.4 배포 및 운영**
 
 - **배포 플랫폼**: Render.com (render.yaml)
 - **로깅**: Python logging (파일/콘솔)
 - **환경 변수**: python-dotenv
-
----
-
-## **6. 팀원 소개**
-
-| 이름      | 역할              | GitHub                               | 담당 기능                                 |
-|----------|------------------|-------------------------------------|-----------------------------------------|
-| **김장원** | 팀장 | [GitHub 링크](https://github.com/jkim1209)             | 아키텍처 디자인 및 관리, 에이전트 및 도구 개발, 모듈 통합 및 배포|
-| **김수환** | 팀원 | [GitHub 링크](https://github.com/suhwankimkim)             | 데모 streamlit 앱 개발, 에이전트 개발, 디버깅 및 리팩토링|
-| **이윤서** | 팀원 | [GitHub 링크](https://github.com/riicoseo)             | RAG 시스템 개발, LangGraph Workflow 개발|
-| **이가은** | 팀원 | [GitHub 링크](https://github.com/kkaeunii)             | 에이전트 개발, 프롬프팅|
-| **이건희** | 팀원 | [GitHub 링크](https://github.com/GH-Lee33)             | 도구 개발|
 
 ---
 
@@ -314,14 +350,14 @@ uv pip install -r requirements.txt
 
 ## **8. 사용 예시**
 
-### 시연 화면
+### **8.1 시연 화면**
 
 <img src="img/streamlit_demo1.png" width="60%"><br>
 <img src="img/streamlit_demo2.png" width="60%"><br>
 <img src="img/streamlit_demo3.png" width="60%"><br>
 <img src="img/streamlit_demo4.png" width="60%">
 
-### 질문 예시
+### **8.2  질문 예시**
 
 - "애플 주식 분석해줘"
 - "삼성전자와 애플을 비교해줘"
@@ -329,7 +365,7 @@ uv pip install -r requirements.txt
 - "애플 주식 분석 보고서를 차트와 함께 PDF로 저장해줘"
 - "나스닥이 뭐야?" (RAG 검색)
 
-### 응답 형태
+### **8.3 응답 형태**
 
 - 마크다운 형식의 상세 분석 보고서
 - 주가 차트 이미지 (`charts/` 디렉토리)
