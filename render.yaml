@@ -7,7 +7,7 @@ services:
       pip install --upgrade pip
       pip install -r requirements.txt
       PYTHONPATH=$PWD python -c "from src.rag.vector_store import VectorStore; vs = VectorStore(); vs.build_vector_store()"
-    startCommand: PYTHONPATH=$PWD streamlit run src/streamlit_app.py --server.port=$PORT --server.address=0.0.0.0
+    startCommand: PYTHONPATH=$PWD streamlit run src/streamlit_app_render.py --server.port=$PORT --server.address=0.0.0.0
     healthCheckPath: /_stcore/health
     envVars:
       - key: PYTHON_VERSION
@@ -16,6 +16,8 @@ services:
         sync: false
       - key: TAVILY_API_KEY
         sync: false
+      - key: MAX_CONTEXT_MESSAGES
+        value: 0  # 0 = 무제한 (배포 환경에서만)
     disk:
       name: chromadb-storage
       mountPath: /opt/render/project/data/chroma_store
