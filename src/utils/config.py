@@ -66,6 +66,3 @@ class Config:
     # Response Messages
     NOT_FINANCE_RESPONSE = "저는 경제, 금융관련 정보를 통해 전문적으로 사용자의 요청을 도와드리는 AI입니다!\n주식, 환율, 기업 분석 등 금융 관련 질문을 해주시면 답변 도와 드릴게요 😄"
     SESSION_LIMIT_RESPONSE = "💬 대화가 너무 길어졌습니다.\n\n왼쪽 사이드바의 '🆕 새 대화' 버튼을 눌러 새로운 대화를 시작해주세요."
-
-
-
