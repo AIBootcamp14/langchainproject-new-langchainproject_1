@@ -66,15 +66,12 @@ with st.sidebar:
 
     # 대화 히스토리 목록
     st.subheader("📚 최근 대화")
-    st.caption("💡 각 대화는 독립적입니다 (최대 20개 메시지)")
+    st.caption("💡 각 대화는 독립적입니다 (최대 총 20개 메시지)")
 
     # 요약 상태 표시
     msg_count = len(st.session_state.messages)
-    if msg_count > 20:
-        middle_count = msg_count - 20
-        st.caption(f"📝 요약 활성: 중간 {middle_count}개 메시지 압축됨")
-    elif msg_count > 15:
-        st.caption(f"⏳ 곧 요약 시작 ({msg_count}/20)")
+    if msg_count > 15:
+        st.caption(f"⏳ 곧 최대 메시지 개수 도달 ({msg_count}/20)")
 
     # 모든 세션 목록 가져오기
     all_sessions = db.get_all_sessions(limit=20)
